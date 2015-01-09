@@ -11,7 +11,6 @@ class BindVarsProxy(object):
 
   def __getitem__(self, name):
     var = self.bind_vars[name]
-    self.bind_vars[name]
     self.accessed_keys.add(name)
     if isinstance(var, (list, set, tuple)):
       return '::%s' % name

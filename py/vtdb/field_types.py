@@ -71,11 +71,6 @@ conversions = {
   VT_NEWDECIMAL : Decimal,
 }
 
-# This is a temporary workaround till we figure out how to support
-# native lists in our API.
-class List(list):
-  pass
-
 NoneType = type(None)
 
 # FIXME(msolomon) we could make a SqlLiteral ABC and just type check.
