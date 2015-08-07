@@ -94,7 +94,7 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 	s := createSandbox(name)
 	s.EndPointMustFail = retryCount + 1
 	err := f()
-	want := fmt.Sprintf("shard, host: %v.0., {Uid:0 Host: NamedPortMap:map[] Health:map[]}, endpoints fetch error: topo error", name)
+	want := fmt.Sprintf("shard, host: %v.0., <nil>, endpoints fetch error: topo error", name)
 	if err == nil || err.Error() != want {
 		t.Errorf("want %s, got %v", want, err)
 	}
@@ -108,7 +108,7 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 	s.MapTestConn("0", sbc)
 	s.DialMustFail = 4
 	err = f()
-	want = fmt.Sprintf("shard, host: %v.0., %+v, conn error %+v", name, topo.EndPoint{}, sbc.EndPoint())
+	want = fmt.Sprintf("shard, host: %v.0., %+v, conn error %+v", name, nil, sbc.EndPoint())
 	if err == nil || err.Error() != want {
 		t.Errorf("want %s, got %v", want, err)
 	}
@@ -124,7 +124,7 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 	sbc = &sandboxConn{mustFailRetry: retryCount + 1}
 	s.MapTestConn("0", sbc)
 	err = f()
-	want = fmt.Sprintf("shard, host: %v.0., %+v, no valid endpoint", name, topo.EndPoint{})
+	want = fmt.Sprintf("shard, host: %v.0., %+v, no valid endpoint", name, nil)
 	if err == nil || err.Error() != want {
 		t.Errorf("want %s, got %v", want, err)
 	}
@@ -133,8 +133,8 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 		t.Errorf("want 2, got %v", s.DialCounter)
 	}
 	// Ensure we executed 2 times before failing.
-	if sbc.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
 
 	// retry error (one failure)
@@ -150,8 +150,8 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 		t.Errorf("want 2, got %v", s.DialCounter)
 	}
 	// Ensure we executed twice (second one succeeded)
-	if sbc.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
 
 	// fatal error (one failure)
@@ -167,8 +167,8 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 		t.Errorf("want 2, got %v", s.DialCounter)
 	}
 	// Ensure we executed twice (second one succeeded)
-	if sbc.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
 
 	// server error
@@ -176,7 +176,7 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 	sbc = &sandboxConn{mustFailServer: 1}
 	s.MapTestConn("0", sbc)
 	err = f()
-	want = fmt.Sprintf("shard, host: %v.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, error: err", name)
+	want = fmt.Sprintf("shard, host: %v.0., host:\"0\" port_map:<key:\"vt\" value:1 > , error: err", name)
 	if err == nil || err.Error() != want {
 		t.Errorf("want %s, got %v", want, err)
 	}
@@ -185,8 +185,8 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 		t.Errorf("want 1, got %v", s.DialCounter)
 	}
 	// Ensure we did not re-execute.
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 
 	// conn error (one failure)
@@ -195,7 +195,7 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 	sbc = &sandboxConn{mustFailConn: 1}
 	s.MapTestConn("0", sbc)
 	err = f()
-	want = fmt.Sprintf("shard, host: %v.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, error: conn", name)
+	want = fmt.Sprintf("shard, host: %v.0., host:\"0\" port_map:<key:\"vt\" value:1 > , error: conn", name)
 	if err == nil || err.Error() != want {
 		t.Errorf("want %v, got %v", want, err)
 	}
@@ -204,8 +204,8 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 		t.Errorf("want 1, got %v", s.DialCounter)
 	}
 	// Ensure we did not re-execute.
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 
 	// no failures
@@ -219,8 +219,8 @@ func testShardConnGeneric(t *testing.T, name string, f func() error) {
 	if s.DialCounter != 1 {
 		t.Errorf("want 1, got %v", s.DialCounter)
 	}
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 }
 
@@ -230,13 +230,13 @@ func testShardConnTransact(t *testing.T, name string, f func() error) {
 	sbc := &sandboxConn{mustFailRetry: 3}
 	s.MapTestConn("0", sbc)
 	err := f()
-	want := fmt.Sprintf("shard, host: %v.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, retry: err", name)
+	want := fmt.Sprintf("shard, host: %v.0., host:\"0\" port_map:<key:\"vt\" value:1 > , retry: err", name)
 	if err == nil || err.Error() != want {
 		t.Errorf("want %s, got %v", want, err)
 	}
 	// Should not retry if we're in transaction
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 
 	// conn error
@@ -244,13 +244,13 @@ func testShardConnTransact(t *testing.T, name string, f func() error) {
 	sbc = &sandboxConn{mustFailConn: 3}
 	s.MapTestConn("0", sbc)
 	err = f()
-	want = fmt.Sprintf("shard, host: %v.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, error: conn", name)
+	want = fmt.Sprintf("shard, host: %v.0., host:\"0\" port_map:<key:\"vt\" value:1 > , error: conn", name)
 	if err == nil || err.Error() != want {
 		t.Errorf("want %s, got %v", want, err)
 	}
 	// Should not retry if we're in transaction
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 }
 
@@ -259,7 +259,7 @@ func TestShardConnBeginOther(t *testing.T) {
 	s := createSandbox("TestShardConnBeginOther")
 	sbc := &sandboxConn{mustFailTxPool: 1}
 	s.MapTestConn("0", sbc)
-	want := fmt.Sprintf("shard, host: TestShardConnBeginOther.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, tx_pool_full: err")
+	want := fmt.Sprintf("shard, host: TestShardConnBeginOther.0., host:\"0\" port_map:<key:\"vt\" value:1 > , tx_pool_full: err")
 	sdc := NewShardConn(context.Background(), new(sandboxTopo), "aa", "TestShardConnBeginOther", "0", "", 10*time.Millisecond, 3, connTimeoutTotal, connTimeoutPerConn, 24*time.Hour, connectTimings)
 	_, err := sdc.Begin(context.Background())
 	if err == nil || err.Error() != want {
@@ -270,8 +270,8 @@ func TestShardConnBeginOther(t *testing.T) {
 		t.Errorf("want 1, got %v", s.DialCounter)
 	}
 	// Account for 1 call to Begin.
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 }
 
@@ -289,8 +289,8 @@ func TestShardConnStreamingRetry(t *testing.T) {
 	if s.DialCounter != 2 {
 		t.Errorf("want 2, got %v", s.DialCounter)
 	}
-	if sbc.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
 
 	// ERR_FATAL
@@ -300,15 +300,15 @@ func TestShardConnStreamingRetry(t *testing.T) {
 	sdc = NewShardConn(context.Background(), new(sandboxTopo), "aa", "TestShardConnStreamingRetry", "0", "", 10*time.Millisecond, 3, connTimeoutTotal, connTimeoutPerConn, 24*time.Hour, connectTimings)
 	_, errfunc = sdc.StreamExecute(context.Background(), "query", nil, 0)
 	err = errfunc()
-	want := "shard, host: TestShardConnStreamingRetry.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, fatal: err"
+	want := "shard, host: TestShardConnStreamingRetry.0., host:\"0\" port_map:<key:\"vt\" value:1 > , fatal: err"
 	if err == nil || err.Error() != want {
 		t.Errorf("want %v, got %v", want, err)
 	}
 	if s.DialCounter != 1 {
 		t.Errorf("want 1, got %v", s.DialCounter)
 	}
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 }
 
@@ -486,8 +486,8 @@ func TestShardConnReconnect(t *testing.T) {
 	if timeDuration >= retryDelay {
 		t.Errorf("want no delay, got %v", timeDuration)
 	}
-	if sbc0.ExecCount+sbc1.ExecCount+sbc2.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc0.ExecCount+sbc1.ExecCount+sbc2.ExecCount)
+	if execCount := sbc0.ExecCount.Get() + sbc1.ExecCount.Get() + sbc2.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 	if s.EndPointCounter != 1 {
 		t.Errorf("want 1, got %v", s.EndPointCounter)
@@ -515,11 +515,16 @@ func TestShardConnReconnect(t *testing.T) {
 	if timeDuration >= retryDelay {
 		t.Errorf("want no delay, got %v", timeDuration)
 	}
-	if sbc0.ExecCount+sbc1.ExecCount+sbc2.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc0.ExecCount+sbc1.ExecCount+sbc2.ExecCount)
+	if execCount := sbc0.ExecCount.Get() + sbc1.ExecCount.Get() + sbc2.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
-	if sbc0.ExecCount > 1 || sbc1.ExecCount > 1 || sbc2.ExecCount > 1 {
-		t.Errorf("want no more than 1, got %v,%v,%v", sbc0.ExecCount, sbc1.ExecCount, sbc2.ExecCount)
+	{
+		execCount0 := sbc0.ExecCount.Get()
+		execCount1 := sbc1.ExecCount.Get()
+		execCount2 := sbc2.ExecCount.Get()
+		if execCount0 > 1 || execCount1 > 1 || execCount2 > 1 {
+			t.Errorf("want no more than 1, got %v,%v,%v", execCount0, execCount1, execCount2)
+		}
 	}
 	if s.EndPointCounter != 2 {
 		t.Errorf("want 2, got %v", s.EndPointCounter)
@@ -548,11 +553,16 @@ func TestShardConnReconnect(t *testing.T) {
 	if timeDuration >= retryDelay {
 		t.Errorf("want no delay, got %v", timeDuration)
 	}
-	if sbc0.ExecCount+sbc1.ExecCount+sbc2.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc0.ExecCount+sbc1.ExecCount+sbc2.ExecCount)
-	}
-	if sbc0.ExecCount > 1 || sbc1.ExecCount > 1 || sbc2.ExecCount > 1 {
-		t.Errorf("want no more than 1, got %v,%v,%v", sbc0.ExecCount, sbc1.ExecCount, sbc2.ExecCount)
+	{
+		execCount0 := sbc0.ExecCount.Get()
+		execCount1 := sbc1.ExecCount.Get()
+		execCount2 := sbc2.ExecCount.Get()
+		if sum := execCount0 + execCount1 + execCount2; sum != 2 {
+			t.Errorf("want 2, got %v", sum)
+		}
+		if execCount0 > 1 || execCount1 > 1 || execCount2 > 1 {
+			t.Errorf("want no more than 1, got %v,%v,%v", execCount0, execCount1, execCount2)
+		}
 	}
 	if s.EndPointCounter != 2 {
 		t.Errorf("want 2, got %v", s.EndPointCounter)
@@ -585,12 +595,12 @@ func TestShardConnReconnect(t *testing.T) {
 		t.Errorf("want instant resolve %v, got %v", retryDelay, timeDuration)
 	}
 	for _, conn := range []*sandboxConn{sbc0, sbc1, sbc2} {
-		wantExecCount := 1
+		var wantExecCount int64 = 1
 		if conn == firstConn {
 			wantExecCount = 2
 		}
-		if int(conn.ExecCount) != wantExecCount {
-			t.Errorf("want %v, got %v", wantExecCount, conn.ExecCount)
+		if execCount := conn.ExecCount.Get(); execCount != wantExecCount {
+			t.Errorf("want %v, got %v", wantExecCount, execCount)
 		}
 	}
 	if s.EndPointCounter != 5 {
@@ -628,12 +638,12 @@ func TestShardConnReconnect(t *testing.T) {
 	if timeDuration >= retryDelay {
 		t.Errorf("want no delay, got %v", timeDuration)
 	}
-	if firstConn.ExecCount != 1 {
-		t.Errorf("want 1, got %v", firstConn.ExecCount)
+	if execCount := firstConn.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
-	totalExecCount := 0
+	var totalExecCount int64
 	for _, conn := range s.TestConns["0"] {
-		totalExecCount += int(conn.(*sandboxConn).ExecCount)
+		totalExecCount += conn.(*sandboxConn).ExecCount.Get()
 	}
 	if totalExecCount != 1 {
 		t.Errorf("want 1, got %v", totalExecCount)
@@ -681,15 +691,15 @@ func TestShardConnReconnect(t *testing.T) {
 	if timeDuration > retryDelay*2 {
 		t.Errorf("want instant resolve %v, got %v", retryDelay, timeDuration)
 	}
-	if secondConn.ExecCount != 1 {
-		t.Errorf("want 1, got %v", secondConn.ExecCount)
+	if execCount := secondConn.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
-	if firstConn.ExecCount != 2 {
-		t.Errorf("want 2, got %v", firstConn.ExecCount)
+	if execCount := firstConn.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
 	for _, conn := range s.TestConns["0"] {
-		if conn != firstConn && conn.(*sandboxConn).ExecCount != 1 {
-			t.Errorf("want 1, got %v", conn.(*sandboxConn).ExecCount)
+		if execCount := conn.(*sandboxConn).ExecCount.Get(); conn != firstConn && execCount != 1 {
+			t.Errorf("want 1, got %v", execCount)
 		}
 	}
 	if s.EndPointCounter != 6 {
@@ -734,16 +744,16 @@ func TestShardConnReconnect(t *testing.T) {
 	if timeDuration >= retryDelay {
 		t.Errorf("want no delay, got %v", timeDuration)
 	}
-	if firstConn.ExecCount != 1 {
-		t.Errorf("want 1, got %v", firstConn.ExecCount)
+	if execCount := firstConn.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 	for _, conn := range []*sandboxConn{sbc0, sbc1, sbc2} {
-		if conn != firstConn && conn.ExecCount != 0 {
-			t.Errorf("want 0, got %v", conn.ExecCount)
+		if execCount := conn.ExecCount.Get(); conn != firstConn && execCount != 0 {
+			t.Errorf("want 0, got %v", execCount)
 		}
 	}
-	if sbc3.ExecCount+sbc4.ExecCount+sbc5.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc3.ExecCount+sbc4.ExecCount+sbc5.ExecCount)
+	if sum := sbc3.ExecCount.Get() + sbc4.ExecCount.Get() + sbc5.ExecCount.Get(); sum != 1 {
+		t.Errorf("want 1, got %v", sum)
 	}
 	if s.EndPointCounter != 2 {
 		t.Errorf("want 2, got %v", s.EndPointCounter)

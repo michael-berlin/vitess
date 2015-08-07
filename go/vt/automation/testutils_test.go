@@ -15,10 +15,12 @@ func testingTaskCreator(taskName string) Task {
 	// Tasks for testing only.
 	case "TestingEchoTask":
 		return &TestingEchoTask{}
-	case "TestingEmitEchoTask":
-		return &TestingEmitEchoTask{}
 	case "TestingFailTask":
 		return &TestingFailTask{}
+	case "TestingEmitEchoTask":
+		return &TestingEmitEchoTask{}
+	case "TestingEmitEchoFailEchoTask":
+		return &TestingEmitEchoFailEchoTask{}
 	default:
 		return nil
 	}
@@ -28,39 +30,57 @@ func testingTaskCreator(taskName string) Task {
 type TestingEchoTask struct {
 }
 
-func (t *TestingEchoTask) run(parameters map[string]string) (newTasks []*pb.TaskContainer, output string, err error) {
+func (t *TestingEchoTask) Run(parameters map[string]string) (newTasks []*pb.TaskContainer, output string, err error) {
 	for _, v := range parameters {
 		output += v
 	}
 	return
 }
 
-func (t *TestingEchoTask) requiredParameters() []string {
+func (t *TestingEchoTask) RequiredParameters() []string {
 	return []string{"echo_text"}
-}
-
-// TestingEmitEchoTask is used only for testing. It emits a TestingEchoTask.
-type TestingEmitEchoTask struct {
-}
-
-func (t *TestingEmitEchoTask) run(parameters map[string]string) (newTasks []*pb.TaskContainer, output string, err error) {
-	return []*pb.TaskContainer{
-		NewTaskContainerWithSingleTask("TestingEchoTask", parameters),
-	}, "emitted TestingEchoTask", nil
-}
-
-func (t *TestingEmitEchoTask) requiredParameters() []string {
-	return []string{}
 }
 
 // TestingFailTask is used only for testing. It always fails.
 type TestingFailTask struct {
 }
 
-func (t *TestingFailTask) run(parameters map[string]string) (newTasks []*pb.TaskContainer, output string, err error) {
+func (t *TestingFailTask) Run(parameters map[string]string) (newTasks []*pb.TaskContainer, output string, err error) {
 	return nil, "something went wrong", errors.New("full error message")
 }
 
-func (t *TestingFailTask) requiredParameters() []string {
+func (t *TestingFailTask) RequiredParameters() []string {
+	return []string{}
+}
+
+// TestingEmitEchoTask is used only for testing. It emits a TestingEchoTask.
+type TestingEmitEchoTask struct {
+}
+
+func (t *TestingEmitEchoTask) Run(parameters map[string]string) (newTasks []*pb.TaskContainer, output string, err error) {
+	return []*pb.TaskContainer{
+		NewTaskContainerWithSingleTask("TestingEchoTask", parameters),
+	}, "emitted TestingEchoTask", nil
+}
+
+func (t *TestingEmitEchoTask) RequiredParameters() []string {
+	return []string{}
+}
+
+// TestingEmitEchoFailEchoTask is used only for testing.
+// It emits three sequential tasks: Echo, Fail, Echo.
+type TestingEmitEchoFailEchoTask struct {
+}
+
+func (t *TestingEmitEchoFailEchoTask) Run(parameters map[string]string) (newTasks []*pb.TaskContainer, output string, err error) {
+	newTasks = []*pb.TaskContainer{
+		NewTaskContainerWithSingleTask("TestingEchoTask", parameters),
+		NewTaskContainerWithSingleTask("TestingFailTask", parameters),
+		NewTaskContainerWithSingleTask("TestingEchoTask", parameters),
+	}
+	return newTasks, "emitted tasks: Echo, Fail, Echo", nil
+}
+
+func (t *TestingEmitEchoFailEchoTask) RequiredParameters() []string {
 	return []string{}
 }

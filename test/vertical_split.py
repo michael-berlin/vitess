@@ -19,8 +19,8 @@ import environment
 import utils
 import tablet
 
-TABLET = "tablet"
-VTGATE = "vtgate"
+TABLET = 'tablet'
+VTGATE = 'vtgate'
 VTGATE_PROTOCOL_TABLET = 'v0'
 client_type = TABLET
 
@@ -90,10 +90,10 @@ class TestVerticalSplit(unittest.TestCase):
   def setUp(self):
     utils.VtGate().start(cache_ttl='0s')
     self.vtgate_client = zkocc.ZkOccConnection(utils.vtgate.addr(),
-                                               "test_nj", 30.0)
+                                               'test_nj', 30.0)
     self.vtgate_addrs = None
     if client_type == VTGATE:
-      self.vtgate_addrs = {"vt": [utils.vtgate.addr(),]}
+      self.vtgate_addrs = {'vt': [utils.vtgate.addr(),]}
 
     self.insert_index = 0
     # Lowering the keyspace refresh throttle so things are testable.
@@ -140,25 +140,24 @@ index by_msg (msg)
   # insert some values in the source master db, return the first id used
   def _insert_values(self, table, count):
     result = self.insert_index
-    conn = self._vtdb_conn()
-    cursor = conn.cursor()
     for i in xrange(count):
-      conn.begin()
-      cursor.execute("insert into %s (id, msg) values(%u, 'value %u')" % (
-          table, self.insert_index, self.insert_index), {})
-      conn.commit()
+      source_master.execute('insert into %s (id, msg) values(:id, :msg)' %
+                            table,
+                            bindvars={
+                                'id': self.insert_index,
+                                'msg': 'value %u' % self.insert_index,
+                                })
       self.insert_index += 1
-    conn.close()
     return result
 
   def _check_values(self, tablet, dbname, table, first, count):
-    logging.debug("Checking %u values from %s/%s starting at %u", count, dbname,
+    logging.debug('Checking %u values from %s/%s starting at %u', count, dbname,
                   table, first)
     rows = tablet.mquery(dbname, 'select id, msg from %s where id>=%u order by id limit %u' % (table, first, count))
-    self.assertEqual(count, len(rows), "got wrong number of rows: %u != %u" %
+    self.assertEqual(count, len(rows), 'got wrong number of rows: %u != %u' %
                      (len(rows), count))
     for i in xrange(count):
-      self.assertEqual(first + i, rows[i][0], "invalid id[%u]: %u != %u" %
+      self.assertEqual(first + i, rows[i][0], 'invalid id[%u]: %u != %u' %
                        (i, first + i, rows[i][0]))
       self.assertEqual('value %u' % (first + i), rows[i][1],
                        "invalid msg[%u]: 'value %u' != '%s'" %
@@ -174,7 +173,7 @@ index by_msg (msg)
         timeout -= 1
         if timeout == 0:
           raise
-        logging.debug("Sleeping for 1s waiting for data in %s/%s", dbname,
+        logging.debug('Sleeping for 1s waiting for data in %s/%s', dbname,
                       table)
         time.sleep(1)
 
@@ -182,45 +181,46 @@ index by_msg (msg)
     cell = 'test_nj'
     keyspace = 'destination_keyspace'
     ks = utils.run_vtctl_json(['GetSrvKeyspace', cell, keyspace])
-    result = ""
+    result = ''
     if 'ServedFrom' in ks and ks['ServedFrom']:
       for served_from in sorted(ks['ServedFrom'].keys()):
-        result += "ServedFrom(%s): %s\n" % (served_from,
+        result += 'ServedFrom(%s): %s\n' % (served_from,
                                             ks['ServedFrom'][served_from])
-    logging.debug("Cell %s keyspace %s has data:\n%s", cell, keyspace, result)
+    logging.debug('Cell %s keyspace %s has data:\n%s', cell, keyspace, result)
     self.assertEqual(expected, result,
-                     "Mismatch in srv keyspace for cell %s keyspace %s, expected:\n%s\ngot:\n%s" % (
+                     'Mismatch in srv keyspace for cell %s keyspace %s, expected:\n%s\ngot:\n%s' % (
                      cell, keyspace, expected, result))
     self.assertEqual('', ks.get('ShardingColumnName'),
-                     "Got wrong ShardingColumnName in SrvKeyspace: %s" %
+                     'Got wrong ShardingColumnName in SrvKeyspace: %s' %
                      str(ks))
     self.assertEqual('', ks.get('ShardingColumnType'),
-                     "Got wrong ShardingColumnType in SrvKeyspace: %s" %
+                     'Got wrong ShardingColumnType in SrvKeyspace: %s' %
                      str(ks))
 
   def _check_blacklisted_tables(self, tablet, expected):
     status = tablet.get_status()
     if expected:
-      self.assertIn("BlacklistedTables: %s" % " ".join(expected), status)
+      self.assertIn('BlacklistedTables: %s' % ' '.join(expected), status)
     else:
-      self.assertNotIn("BlacklistedTables", status)
+      self.assertNotIn('BlacklistedTables', status)
 
     # check we can or cannot access the tables
     utils.run_vtctl(['ReloadSchema', tablet.tablet_alias])
-    conn = tablet.conn()
-    for t in ["moving1", "moving2"]:
-      if expected and "moving.*" in expected:
+    for t in ['moving1', 'moving2']:
+      if expected and 'moving.*' in expected:
         # table is blacklisted, should get the error
-        try:
-          results, rowcount, lastrowid, fields = conn._execute("select count(1) from %s" % t, {})
-          self.fail("blacklisted query execution worked")
-        except dbexceptions.RetryError as e:
-          self.assertTrue(str(e).find("retry: Query disallowed due to rule: enforce blacklisted tables") != -1, "Cannot find the right error message in query for blacklisted table: %s" % e)
+        _, stderr = utils.run_vtctl(['VtTabletExecute',
+                                     '-keyspace', tablet.keyspace,
+                                     '-shard', tablet.shard,
+                                     tablet.tablet_alias,
+                                     'select count(1) from %s' % t],
+                                    expect_fail=True)
+        self.assertIn('retry: Query disallowed due to rule: enforce blacklisted tables', stderr)
       else:
         # table is not blacklisted, should just work
-        results, rowcount, lastrowid, fields = conn._execute("select count(1) from %s" % t, {})
-        logging.debug("Got %d rows from table %s on tablet %s", results[0][0], t, tablet.tablet_alias)
-    conn.close()
+        qr = tablet.execute('select count(1) from %s' % t)
+        logging.debug('Got %s rows from table %s on tablet %s',
+                      qr['Rows'][0][0], t, tablet.tablet_alias)
 
   def _populate_topo_cache(self):
     topology.read_topology(self.vtgate_client)
@@ -366,7 +366,7 @@ index by_msg (msg)
                                'moving2', moving2_first_add1, 100)
 
     # use vtworker to compare the data
-    logging.debug("Running vtworker VerticalSplitDiff")
+    logging.debug('Running vtworker VerticalSplitDiff')
     utils.run_vtworker(['-cell', 'test_nj', 'VerticalSplitDiff',
                         'destination_keyspace/0'], auto_log=True)
     utils.run_vtctl(['ChangeSlaveType', source_rdonly1.tablet_alias, 'rdonly'],
@@ -378,7 +378,7 @@ index by_msg (msg)
     utils.run_vtctl(['ChangeSlaveType', destination_rdonly2.tablet_alias,
                      'rdonly'], auto_log=True)
 
-    utils.pause("Good time to test vtworker for diffs")
+    utils.pause('Good time to test vtworker for diffs')
 
     # get status for destination master tablet, make sure we have it all
     destination_master_status = destination_master.get_status()
@@ -412,19 +412,31 @@ index by_msg (msg)
     # migrate test_nj only, using command line manual fix command,
     # and restore it back.
     keyspace_json = utils.run_vtctl_json(['GetKeyspace', 'destination_keyspace'])
-    self.assertEqual(keyspace_json['ServedFromMap']['rdonly']['Cells'],
-                     ['test_nj'])
+    found = False
+    for ksf in keyspace_json['served_froms']:
+      if ksf['tablet_type'] == 4:
+        found = True
+        self.assertEqual(ksf['cells'], ['test_nj'])
+    self.assertTrue(found)
     utils.run_vtctl(['SetKeyspaceServedFrom', '-source=source_keyspace',
                      '-remove', '-cells=test_nj', 'destination_keyspace',
                      'rdonly'], auto_log=True)
     keyspace_json = utils.run_vtctl_json(['GetKeyspace', 'destination_keyspace'])
-    self.assertFalse('rdonly' in keyspace_json['ServedFromMap'])
+    found = False
+    for ksf in keyspace_json['served_froms']:
+      if ksf['tablet_type'] == 4:
+        found = True
+    self.assertFalse(found)
     utils.run_vtctl(['SetKeyspaceServedFrom', '-source=source_keyspace',
                      'destination_keyspace', 'rdonly'],
                     auto_log=True)
     keyspace_json = utils.run_vtctl_json(['GetKeyspace', 'destination_keyspace'])
-    self.assertEqual(keyspace_json['ServedFromMap']['rdonly']['Cells'],
-                     None)
+    found = False
+    for ksf in keyspace_json['served_froms']:
+      if ksf['tablet_type'] == 4:
+        found = True
+        self.assertNotIn('cells', ksf)
+    self.assertTrue(found)
 
     # now serve rdonly from the destination shards
     utils.run_vtctl(['MigrateServedFrom', 'destination_keyspace/0', 'rdonly'],
@@ -486,14 +498,16 @@ index by_msg (msg)
     utils.run_vtctl(['SetShardTabletControl', '--remove', 'source_keyspace/0',
                      'rdonly'], auto_log=True)
     shard_json = utils.run_vtctl_json(['GetShard', 'source_keyspace/0'])
-    self.assertNotIn('rdonly', shard_json['TabletControlMap'])
-    self.assertIn('replica', shard_json['TabletControlMap'])
-    self.assertIn('master', shard_json['TabletControlMap'])
+    self.assertEqual(len(shard_json['tablet_controls']), 2)
+    for tc in shard_json['tablet_controls']:
+      self.assertIn(tc['tablet_type'], [2, 3]) # MASTER, REPLICA
     utils.run_vtctl(['SetShardTabletControl', '--tables=moving.*,view1',
                      'source_keyspace/0', 'rdonly'], auto_log=True)
     shard_json = utils.run_vtctl_json(['GetShard', 'source_keyspace/0'])
-    self.assertEqual(['moving.*', 'view1'],
-                     shard_json['TabletControlMap']['rdonly']['BlacklistedTables'])
+    for tc in shard_json['tablet_controls']:
+      if tc['tablet_type'] == 4:
+        break
+    self.assertEqual(['moving.*', 'view1'], tc['blacklisted_tables'])
     utils.run_vtctl(['SetShardTabletControl', '--remove', 'source_keyspace/0',
                      'rdonly'], auto_log=True)
     utils.run_vtctl(['SetShardTabletControl', '--remove', 'source_keyspace/0',
@@ -501,7 +515,7 @@ index by_msg (msg)
     utils.run_vtctl(['SetShardTabletControl', '--remove', 'source_keyspace/0',
                      'master'], auto_log=True)
     shard_json = utils.run_vtctl_json(['GetShard', 'source_keyspace/0'])
-    self.assertEqual(None, shard_json['TabletControlMap'])
+    self.assertNotIn('tablet_controls', shard_json)
 
     # check the binlog player is gone now
     destination_master.wait_for_binlog_player_count(0)

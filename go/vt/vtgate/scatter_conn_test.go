@@ -46,10 +46,7 @@ func TestScatterConnExecuteBatch(t *testing.T) {
 			Keyspace:      "TestScatterConnExecuteBatch",
 			Shards:        shards,
 		}}
-		scatterRequest, err := boundShardQueriesToScatterBatchRequest(queries)
-		if err != nil {
-			t.Error(err)
-		}
+		scatterRequest := boundShardQueriesToScatterBatchRequest(queries)
 		qrs, err := stc.ExecuteBatch(context.Background(), scatterRequest, "", false, nil)
 		if err != nil {
 			return nil, err
@@ -102,14 +99,14 @@ func testScatterConnGeneric(t *testing.T, name string, f func(shards []string) (
 	sbc := &sandboxConn{mustFailServer: 1}
 	s.MapTestConn("0", sbc)
 	qr, err = f([]string{"0"})
-	want := fmt.Sprintf("shard, host: %v.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, error: err", name)
+	want := fmt.Sprintf("shard, host: %v.0., host:\"0\" port_map:<key:\"vt\" value:1 > , error: err", name)
 	// Verify server error string.
 	if err == nil || err.Error() != want {
 		t.Errorf("want %s, got %v", want, err)
 	}
 	// Ensure that we tried only once.
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 
 	// two shards
@@ -120,17 +117,17 @@ func testScatterConnGeneric(t *testing.T, name string, f func(shards []string) (
 	s.MapTestConn("1", sbc1)
 	_, err = f([]string{"0", "1"})
 	// Verify server errors are consolidated.
-	want1 := fmt.Sprintf("shard, host: %v.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, error: err\nshard, host: %v.1., {Uid:0 Host:1 NamedPortMap:map[vt:1] Health:map[]}, error: err", name, name)
-	want2 := fmt.Sprintf("shard, host: %v.1., {Uid:0 Host:1 NamedPortMap:map[vt:1] Health:map[]}, error: err\nshard, host: %v.0., {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, error: err", name, name)
+	want1 := fmt.Sprintf("shard, host: %v.0., host:\"0\" port_map:<key:\"vt\" value:1 > , error: err\nshard, host: %v.1., host:\"1\" port_map:<key:\"vt\" value:1 > , error: err", name, name)
+	want2 := fmt.Sprintf("shard, host: %v.1., host:\"1\" port_map:<key:\"vt\" value:1 > , error: err\nshard, host: %v.0., host:\"0\" port_map:<key:\"vt\" value:1 > , error: err", name, name)
 	if err == nil || (err.Error() != want1 && err.Error() != want2) {
 		t.Errorf("\nwant\n%s\ngot\n%v", want1, err)
 	}
 	// Ensure that we tried only once.
-	if sbc0.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
-	if sbc1.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc1.ExecCount)
+	if execCount := sbc1.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 
 	// duplicate shards
@@ -139,8 +136,8 @@ func testScatterConnGeneric(t *testing.T, name string, f func(shards []string) (
 	s.MapTestConn("0", sbc)
 	qr, err = f([]string{"0", "0"})
 	// Ensure that we executed only once.
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 
 	// no errors
@@ -153,11 +150,11 @@ func testScatterConnGeneric(t *testing.T, name string, f func(shards []string) (
 	if err != nil {
 		t.Errorf("want nil, got %v", err)
 	}
-	if sbc0.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
-	if sbc1.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc1.ExecCount)
+	if execCount := sbc1.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 	if qr.RowsAffected != 2 {
 		t.Errorf("want 2, got %v", qr.RowsAffected)
@@ -290,11 +287,11 @@ func TestScatterConnCommitSuccess(t *testing.T) {
 	if !reflect.DeepEqual(wantSession, *session.Session) {
 		t.Errorf("want\n%+v, got\n%+v", wantSession, *session.Session)
 	}
-	if sbc0.CommitCount != 1 {
-		t.Errorf("want 1, got %d", sbc0.CommitCount)
+	if commitCount := sbc0.CommitCount.Get(); commitCount != 1 {
+		t.Errorf("want 1, got %d", commitCount)
 	}
-	if sbc1.RollbackCount != 1 {
-		t.Errorf("want 1, got %d", sbc1.RollbackCount)
+	if rollbackCount := sbc1.RollbackCount.Get(); rollbackCount != 1 {
+		t.Errorf("want 1, got %d", rollbackCount)
 	}
 }
 
@@ -318,11 +315,11 @@ func TestScatterConnRollback(t *testing.T) {
 	if !reflect.DeepEqual(wantSession, *session.Session) {
 		t.Errorf("want\n%#v, got\n%#v", wantSession, *session.Session)
 	}
-	if sbc0.RollbackCount != 1 {
-		t.Errorf("want 1, got %d", sbc0.RollbackCount)
+	if rollbackCount := sbc0.RollbackCount.Get(); rollbackCount != 1 {
+		t.Errorf("want 1, got %d", rollbackCount)
 	}
-	if sbc1.RollbackCount != 1 {
-		t.Errorf("want 1, got %d", sbc1.RollbackCount)
+	if rollbackCount := sbc1.RollbackCount.Get(); rollbackCount != 1 {
+		t.Errorf("want 1, got %d", rollbackCount)
 	}
 }
 
@@ -334,8 +331,8 @@ func TestScatterConnClose(t *testing.T) {
 	stc.Execute(context.Background(), "query1", nil, "TestScatterConnClose", []string{"0"}, "", nil, false)
 	stc.Close()
 	time.Sleep(1)
-	if sbc.CloseCount != 1 {
-		t.Errorf("want 1, got %d", sbc.CloseCount)
+	if closeCount := sbc.CloseCount.Get(); closeCount != 1 {
+		t.Errorf("want 1, got %d (test may be flaky because connections are closed asynchronously)", closeCount)
 	}
 }
 
@@ -383,14 +380,18 @@ func TestScatterConnQueryNotInTransaction(t *testing.T) {
 		t.Errorf("want\n%+v\ngot\n%+v", wantSession, *session.Session)
 	}
 	stc.Commit(context.Background(), session)
-	if sbc0.ExecCount != 1 || sbc1.ExecCount != 3 {
-		t.Errorf("want 1/3, got %d/%d", sbc0.ExecCount, sbc1.ExecCount)
+	{
+		execCount0 := sbc0.ExecCount.Get()
+		execCount1 := sbc1.ExecCount.Get()
+		if execCount0 != 1 || execCount1 != 3 {
+			t.Errorf("want 1/3, got %d/%d", execCount0, execCount1)
+		}
 	}
-	if sbc0.CommitCount != 0 {
-		t.Errorf("want 0, got %d", sbc0.CommitCount)
+	if commitCount := sbc0.CommitCount.Get(); commitCount != 0 {
+		t.Errorf("want 0, got %d", commitCount)
 	}
-	if sbc1.CommitCount != 1 {
-		t.Errorf("want 1, got %d", sbc1.CommitCount)
+	if commitCount := sbc1.CommitCount.Get(); commitCount != 1 {
+		t.Errorf("want 1, got %d", commitCount)
 	}
 
 	// case 2: write query followed by read query (not in transaction), not in the same shard.
@@ -417,14 +418,18 @@ func TestScatterConnQueryNotInTransaction(t *testing.T) {
 		t.Errorf("want\n%+v\ngot\n%+v", wantSession, *session.Session)
 	}
 	stc.Commit(context.Background(), session)
-	if sbc0.ExecCount != 3 || sbc1.ExecCount != 1 {
-		t.Errorf("want 3/1, got %d/%d", sbc0.ExecCount, sbc1.ExecCount)
+	{
+		execCount0 := sbc0.ExecCount.Get()
+		execCount1 := sbc1.ExecCount.Get()
+		if execCount0 != 3 || execCount1 != 1 {
+			t.Errorf("want 3/1, got %d/%d", execCount0, execCount1)
+		}
 	}
-	if sbc0.CommitCount != 1 {
-		t.Errorf("want 1, got %d", sbc0.CommitCount)
+	if commitCount := sbc0.CommitCount.Get(); commitCount != 1 {
+		t.Errorf("want 1, got %d", commitCount)
 	}
-	if sbc1.CommitCount != 0 {
-		t.Errorf("want 0, got %d", sbc1.CommitCount)
+	if commitCount := sbc1.CommitCount.Get(); commitCount != 0 {
+		t.Errorf("want 0, got %d", commitCount)
 	}
 
 	// case 3: write query followed by read query, in the same shard.
@@ -451,14 +456,18 @@ func TestScatterConnQueryNotInTransaction(t *testing.T) {
 		t.Errorf("want\n%+v\ngot\n%+v", wantSession, *session.Session)
 	}
 	stc.Commit(context.Background(), session)
-	if sbc0.ExecCount != 4 || sbc1.ExecCount != 1 {
-		t.Errorf("want 4/1, got %d/%d", sbc0.ExecCount, sbc1.ExecCount)
+	{
+		execCount0 := sbc0.ExecCount.Get()
+		execCount1 := sbc1.ExecCount.Get()
+		if execCount0 != 4 || execCount1 != 1 {
+			t.Errorf("want 4/1, got %d/%d", execCount0, execCount1)
+		}
 	}
-	if sbc0.CommitCount != 1 {
-		t.Errorf("want 1, got %d", sbc0.CommitCount)
+	if commitCount := sbc0.CommitCount.Get(); commitCount != 1 {
+		t.Errorf("want 1, got %d", commitCount)
 	}
-	if sbc1.CommitCount != 0 {
-		t.Errorf("want 0, got %d", sbc1.CommitCount)
+	if commitCount := sbc1.CommitCount.Get(); commitCount != 0 {
+		t.Errorf("want 0, got %d", commitCount)
 	}
 }
 

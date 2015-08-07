@@ -21,6 +21,8 @@ import (
 	"github.com/youtube/vitess/go/vt/topotools"
 	"github.com/youtube/vitess/go/vt/wrangler"
 	"github.com/youtube/vitess/go/vt/zktopo"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 func compactJSON(in []byte) string {
@@ -40,14 +42,14 @@ func TestAPI(t *testing.T) {
 	defer server.Close()
 
 	// Populate topo.
-	ts.CreateKeyspace(ctx, "ks1", &topo.Keyspace{ShardingColumnName: "shardcol"})
-	ts.CreateShard(ctx, "ks1", "-80", &topo.Shard{
+	ts.CreateKeyspace(ctx, "ks1", &pb.Keyspace{ShardingColumnName: "shardcol"})
+	ts.CreateShard(ctx, "ks1", "-80", &pb.Shard{
 		Cells:    cells,
-		KeyRange: key.KeyRange{Start: "", End: "\x80"},
+		KeyRange: &pb.KeyRange{Start: nil, End: []byte{0x80}},
 	})
-	ts.CreateShard(ctx, "ks1", "80-", &topo.Shard{
+	ts.CreateShard(ctx, "ks1", "80-", &pb.Shard{
 		Cells:    cells,
-		KeyRange: key.KeyRange{Start: "\x80", End: ""},
+		KeyRange: &pb.KeyRange{Start: []byte{0x80}, End: nil},
 	})
 
 	topo.CreateTablet(ctx, ts, &topo.Tablet{
@@ -92,10 +94,7 @@ func TestAPI(t *testing.T) {
 		// Keyspaces
 		{"GET", "keyspaces", `["ks1"]`},
 		{"GET", "keyspaces/ks1", `{
-				"ShardingColumnName": "shardcol",
-				"ShardingColumnType": "",
-				"ServedFromMap": null,
-				"SplitShardCount": 0
+				"sharding_column_name": "shardcol"
 			}`},
 		{"POST", "keyspaces/ks1?action=TestKeyspaceAction", `{
 				"Name": "TestKeyspaceAction",
@@ -107,12 +106,8 @@ func TestAPI(t *testing.T) {
 		// Shards
 		{"GET", "shards/ks1/", `["-80","80-"]`},
 		{"GET", "shards/ks1/-80", `{
-				"MasterAlias": {"Cell":"","Uid":0},
-				"KeyRange": {"Start":"","End":"80"},
-				"ServedTypesMap": null,
-				"SourceShards": null,
-				"Cells": ["cell1", "cell2"],
-				"TabletControlMap": null
+				"key_range": {"end":"gA=="},
+				"cells": ["cell1", "cell2"]
 			}`},
 		{"POST", "shards/ks1/-80?action=TestShardAction", `{
 				"Name": "TestShardAction",
@@ -157,9 +152,7 @@ func TestAPI(t *testing.T) {
 		{"GET", "endpoints/cell1/ks1/-80/replica", `{
 				"entries": [{
 						"uid": 100,
-						"host": "",
-						"named_port_map": {"vt": 100},
-						"health": null
+						"port_map": {"vt": 100}
 					}]
 			}`},
 	}

@@ -17,12 +17,15 @@ import (
 	"github.com/youtube/vitess/go/jscfg"
 	"github.com/youtube/vitess/go/sync2"
 	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
+	"github.com/youtube/vitess/go/vt/key"
 	"github.com/youtube/vitess/go/vt/mysqlctl"
 	myproto "github.com/youtube/vitess/go/vt/mysqlctl/proto"
 	"github.com/youtube/vitess/go/vt/topo"
 	"github.com/youtube/vitess/go/vt/topotools"
 	"github.com/youtube/vitess/go/vt/worker/events"
 	"github.com/youtube/vitess/go/vt/wrangler"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // SplitCloneWorker will clone the data within a keyspace from a
@@ -236,7 +239,7 @@ func (scw *SplitCloneWorker) init(ctx context.Context) error {
 
 	// one side should have served types, the other one none,
 	// figure out wich is which, then double check them all
-	if len(os.Left[0].ServedTypesMap) > 0 {
+	if len(os.Left[0].ServedTypes) > 0 {
 		scw.sourceShards = os.Left
 		scw.destinationShards = os.Right
 	} else {
@@ -245,16 +248,16 @@ func (scw *SplitCloneWorker) init(ctx context.Context) error {
 	}
 
 	// validate all serving types
-	servingTypes := []topo.TabletType{topo.TYPE_MASTER, topo.TYPE_REPLICA, topo.TYPE_RDONLY}
+	servingTypes := []pb.TabletType{pb.TabletType_MASTER, pb.TabletType_REPLICA, pb.TabletType_RDONLY}
 	for _, st := range servingTypes {
 		for _, si := range scw.sourceShards {
-			if _, ok := si.ServedTypesMap[st]; !ok {
+			if si.GetServedType(st) == nil {
 				return fmt.Errorf("source shard %v/%v is not serving type %v", si.Keyspace(), si.ShardName(), st)
 			}
 		}
 	}
 	for _, si := range scw.destinationShards {
-		if len(si.ServedTypesMap) > 0 {
+		if len(si.ServedTypes) > 0 {
 			return fmt.Errorf("destination shard %v/%v is serving some types", si.Keyspace(), si.ShardName())
 		}
 	}
@@ -474,7 +477,7 @@ func (scw *SplitCloneWorker) copy(ctx context.Context) error {
 				continue
 			}
 
-			rowSplitter := NewRowSplitter(scw.destinationShards, scw.keyspaceInfo.ShardingColumnType, columnIndexes[tableIndex])
+			rowSplitter := NewRowSplitter(scw.destinationShards, key.ProtoToKeyspaceIdType(scw.keyspaceInfo.ShardingColumnType), columnIndexes[tableIndex])
 
 			chunks, err := FindChunks(ctx, scw.wr, scw.sourceTablets[shardIndex], td, scw.minTableSizeForSplit, scw.sourceReaderCount)
 			if err != nil {

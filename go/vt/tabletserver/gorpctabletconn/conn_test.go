@@ -8,15 +8,14 @@ import (
 	"net"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/youtube/vitess/go/rpcplus"
 	"github.com/youtube/vitess/go/rpcwrap/bsonrpc"
 	"github.com/youtube/vitess/go/vt/tabletserver"
 	"github.com/youtube/vitess/go/vt/tabletserver/gorpcqueryservice"
 	"github.com/youtube/vitess/go/vt/tabletserver/tabletconntest"
-	"github.com/youtube/vitess/go/vt/topo"
-	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // This test makes sure the go rpc service works
@@ -46,23 +45,13 @@ func testGoRPCTabletConn(t *testing.T, rpcOnlyInReply bool) {
 	// Handle errors appropriately
 	*tabletserver.RPCErrorOnlyInReply = rpcOnlyInReply
 
-	// Create a Go RPC client connecting to the server
-	ctx := context.Background()
-	client, err := DialTablet(ctx, topo.EndPoint{
-		Host: "localhost",
-		NamedPortMap: map[string]int{
-			"vt": port,
-		},
-	}, tabletconntest.TestKeyspace, tabletconntest.TestShard, 30*time.Second)
-	if err != nil {
-		t.Fatalf("dial failed: %v", err)
-	}
-
 	// run the test suite
-	tabletconntest.TestSuite(t, client, service)
-
-	// and clean up
-	client.Close()
+	tabletconntest.TestSuite(t, protocolName, &pb.EndPoint{
+		Host: "localhost",
+		PortMap: map[string]int32{
+			"vt": int32(port),
+		},
+	}, service)
 }
 
 func TestGoRPCTabletConn(t *testing.T) {

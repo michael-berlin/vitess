@@ -10,6 +10,8 @@ import (
 
 	"github.com/youtube/vitess/go/vt/topo"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // This file includes the support for serving topo data to an ajax-based
@@ -222,7 +224,7 @@ type Keyspace struct {
 	KeyspaceName string
 
 	// Keyspace is the topo value of this keyspace
-	Keyspace *topo.Keyspace
+	Keyspace *pb.Keyspace
 }
 
 // Reset is part of the VersionedObject interface
@@ -290,7 +292,7 @@ type Shard struct {
 	ShardName string
 
 	// Shard is the topo value of this shard
-	Shard *topo.Shard
+	Shard *pb.Shard
 }
 
 // Reset is part of the VersionedObject interface
@@ -363,10 +365,10 @@ func newCellShardTabletsCache(ts topo.Server) *VersionedObjectCacheMap {
 				Cell:          parts[0],
 				KeyspaceName:  parts[1],
 				ShardName:     parts[2],
-				TabletAliases: make([]topo.TabletAlias, len(sr.ReplicationLinks)),
+				TabletAliases: make([]topo.TabletAlias, len(sr.Nodes)),
 			}
-			for i, rl := range sr.ReplicationLinks {
-				result.TabletAliases[i] = rl.TabletAlias
+			for i, node := range sr.Nodes {
+				result.TabletAliases[i] = topo.ProtoToTabletAlias(node.TabletAlias)
 			}
 			return result, nil
 		})

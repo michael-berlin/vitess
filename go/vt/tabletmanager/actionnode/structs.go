@@ -4,7 +4,11 @@
 
 package actionnode
 
-import "github.com/youtube/vitess/go/vt/topo"
+import (
+	"github.com/youtube/vitess/go/vt/topo"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
+)
 
 /*
 This file defines all the payload structures for the ActionNode objects.
@@ -36,12 +40,12 @@ type ApplySchemaShardArgs struct {
 // SetShardServedTypesArgs is the payload for SetShardServedTypes
 type SetShardServedTypesArgs struct {
 	Cells      []string
-	ServedType topo.TabletType
+	ServedType pb.TabletType
 }
 
 // MigrateServedTypesArgs is the payload for MigrateServedTypes
 type MigrateServedTypesArgs struct {
-	ServedType topo.TabletType
+	ServedType pb.TabletType
 }
 
 // keyspace action node structures
@@ -54,7 +58,7 @@ type ApplySchemaKeyspaceArgs struct {
 
 // MigrateServedFromArgs is the payload for MigrateServedFrom
 type MigrateServedFromArgs struct {
-	ServedType topo.TabletType
+	ServedType pb.TabletType
 }
 
 // methods to build the shard action nodes
@@ -111,7 +115,7 @@ func ApplySchemaShard(masterTabletAlias topo.TabletAlias, change string, simple 
 }
 
 // SetShardServedTypes returns an ActionNode
-func SetShardServedTypes(cells []string, servedType topo.TabletType) *ActionNode {
+func SetShardServedTypes(cells []string, servedType pb.TabletType) *ActionNode {
 	return (&ActionNode{
 		Action: ShardActionSetServedTypes,
 		Args: &SetShardServedTypesArgs{
@@ -122,7 +126,7 @@ func SetShardServedTypes(cells []string, servedType topo.TabletType) *ActionNode
 }
 
 // MigrateServedTypes returns an ActionNode
-func MigrateServedTypes(servedType topo.TabletType) *ActionNode {
+func MigrateServedTypes(servedType pb.TabletType) *ActionNode {
 	return (&ActionNode{
 		Action: ShardActionMigrateServedTypes,
 		Args: &MigrateServedTypesArgs{
@@ -173,7 +177,7 @@ func ApplySchemaKeyspace(change string, simple bool) *ActionNode {
 }
 
 // MigrateServedFrom returns an ActionNode
-func MigrateServedFrom(servedType topo.TabletType) *ActionNode {
+func MigrateServedFrom(servedType pb.TabletType) *ActionNode {
 	return (&ActionNode{
 		Action: KeyspaceActionMigrateServedFrom,
 		Args: &MigrateServedFromArgs{

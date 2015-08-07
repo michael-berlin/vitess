@@ -15,6 +15,8 @@ import (
 	"time"
 
 	log "github.com/golang/glog"
+	"golang.org/x/net/context"
+
 	mproto "github.com/youtube/vitess/go/mysql/proto"
 	"github.com/youtube/vitess/go/stats"
 	"github.com/youtube/vitess/go/sync2"
@@ -29,7 +31,6 @@ import (
 	// import vindexes implementations
 	_ "github.com/youtube/vitess/go/vt/vtgate/vindexes"
 	"github.com/youtube/vitess/go/vt/vtgate/vtgateservice"
-	"golang.org/x/net/context"
 )
 
 const errDupKey = "errno 1062"
@@ -101,7 +102,7 @@ func Init(serv SrvTopoServer, schema *planbuilder.Schema, cell string, retryDela
 		rowsReturned: stats.NewMultiCounters("VtgateApiRowsReturned", []string{"Operation", "Keyspace", "DbType"}),
 
 		maxInFlight: int64(maxInFlight),
-		inFlight:    0,
+		inFlight:    sync2.NewAtomicInt64(0),
 
 		logExecute:                  logutil.NewThrottledLogger("Execute", 5*time.Second),
 		logExecuteShard:             logutil.NewThrottledLogger("ExecuteShard", 5*time.Second),
@@ -288,14 +289,13 @@ func (vtg *VTGate) ExecuteBatchShard(ctx context.Context, batchQuery *proto.Batc
 		return errTooManyInFlight
 	}
 
-	// TODO(sougou): implement functionality
 	qrs, err := vtg.resolver.ExecuteBatch(
 		ctx,
 		batchQuery.TabletType,
 		batchQuery.AsTransaction,
 		batchQuery.Session,
 		func() (*scatterBatchRequest, error) {
-			return boundShardQueriesToScatterBatchRequest(batchQuery.Queries)
+			return boundShardQueriesToScatterBatchRequest(batchQuery.Queries), nil
 		})
 	if err == nil {
 		reply.List = qrs.List
@@ -562,6 +562,11 @@ func (vtg *VTGate) SplitQuery(ctx context.Context, req *proto.SplitQueryRequest,
 	}
 	reply.Splits = splits
 	return nil
+}
+
+// GetSrvKeyspace is part of the vtgate service API.
+func (vtg *VTGate) GetSrvKeyspace(ctx context.Context, keyspace string) (*topo.SrvKeyspace, error) {
+	return vtg.resolver.scatterConn.toposerv.GetSrvKeyspace(ctx, vtg.resolver.scatterConn.cell, keyspace)
 }
 
 // Any errors that are caused by VTGate dependencies (e.g, VtTablet) should be logged

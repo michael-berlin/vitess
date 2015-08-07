@@ -5,12 +5,14 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/golang/glog"
+
 	"github.com/youtube/vitess/go/vt/tabletserver/tabletconn"
 	"github.com/youtube/vitess/go/vt/topo"
 	"golang.org/x/net/context"
 
-	log "github.com/golang/glog"
 	pb "github.com/youtube/vitess/go/vt/proto/query"
+	pbt "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // This file maintains a tablet health cache. It establishes streaming
@@ -85,8 +87,9 @@ func (th *tabletHealth) stream(ctx context.Context, ts topo.Server, tabletAlias 
 		return err
 	}
 
-	// pass in empty keyspace and shard to not ask for sessionId
-	conn, err := tabletconn.GetDialer()(ctx, *ep, "", "", 30*time.Second)
+	// Pass in a tablet type that is not UNKNOWN, so we don't ask
+	// for sessionId.
+	conn, err := tabletconn.GetDialer()(ctx, ep, "", "", pbt.TabletType_MASTER, 30*time.Second)
 	if err != nil {
 		return err
 	}

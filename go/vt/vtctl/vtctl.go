@@ -99,7 +99,6 @@ import (
 	"github.com/youtube/vitess/go/jscfg"
 	"github.com/youtube/vitess/go/netutil"
 	hk "github.com/youtube/vitess/go/vt/hook"
-	"github.com/youtube/vitess/go/vt/key"
 	"github.com/youtube/vitess/go/vt/logutil"
 	myproto "github.com/youtube/vitess/go/vt/mysqlctl/proto"
 	"github.com/youtube/vitess/go/vt/tabletmanager/actionnode"
@@ -107,6 +106,8 @@ import (
 	"github.com/youtube/vitess/go/vt/topotools"
 	"github.com/youtube/vitess/go/vt/wrangler"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 var (
@@ -130,7 +131,7 @@ var commands = []commandGroup{
 	commandGroup{
 		"Tablets", []command{
 			command{"InitTablet", commandInitTablet,
-				"[-force] [-parent] [-update] [-db-name-override=<db name>] [-hostname=<hostname>] [-mysql_port=<port>] [-port=<port>] [-vts_port=<port>] [-keyspace=<keyspace>] [-shard=<shard>] [-parent_alias=<parent alias>] <tablet alias> <tablet type>",
+				"[-force] [-parent] [-update] [-db-name-override=<db name>] [-hostname=<hostname>] [-mysql_port=<port>] [-port=<port>] [-grpc_port=<port>] [-keyspace=<keyspace>] [-shard=<shard>] [-parent_alias=<parent alias>] <tablet alias> <tablet type>",
 				"Initializes a tablet in the topology.\n" +
 					"Valid <tablet type> values are:\n" +
 					"  " + strings.Join(topo.MakeStringTypeList(topo.AllTabletTypes), " ")},
@@ -138,7 +139,7 @@ var commands = []commandGroup{
 				"<tablet alias>",
 				"Outputs a JSON structure that contains information about the Tablet."},
 			command{"UpdateTabletAddrs", commandUpdateTabletAddrs,
-				"[-hostname <hostname>] [-ip-addr <ip addr>] [-mysql-port <mysql port>] [-vt-port <vt port>] [-vts-port <vts port>] <tablet alias> ",
+				"[-hostname <hostname>] [-ip-addr <ip addr>] [-mysql-port <mysql port>] [-vt-port <vt port>] [-grpc-port <grpc port>] <tablet alias> ",
 				"Updates the IP address and port numbers of a tablet."},
 			command{"ScrapTablet", commandScrapTablet,
 				"[-force] [-skip-rebuild] <tablet alias>",
@@ -282,7 +283,7 @@ var commands = []commandGroup{
 		"Generic", []command{
 			command{"Resolve", commandResolve,
 				"<keyspace>.<shard>.<db type>:<port name>",
-				"Reads a list of addresses that can answer this query. The port name can be mysql, vt, or vts. Vitess uses this name to retrieve the actual port number from the topology server (ZooKeeper or etcd)."},
+				"Reads a list of addresses that can answer this query. The port name can be mysql, vt, or grpc. Vitess uses this name to retrieve the actual port number from the topology server (ZooKeeper or etcd)."},
 			command{"RebuildReplicationGraph", commandRebuildReplicationGraph,
 				"<cell1>,<cell2>... <keyspace1>,<keyspace2>,...",
 				"HIDDEN This takes the Thor's hammer approach of recovery and should only be used in emergencies.  cell1,cell2,... are the canonical source of data for the system. This function uses that canonical data to recover the replication graph, at which point further auditing with Validate can reveal any remaining issues."},
@@ -563,6 +564,40 @@ func parseTabletType(param string, types []topo.TabletType) (topo.TabletType, er
 	return tabletType, nil
 }
 
+// parseKeyspaceIdType parses the keyspace id type into the enum
+func parseKeyspaceIdType(param string) (pb.KeyspaceIdType, error) {
+	if param == "" {
+		return pb.KeyspaceIdType_UNSET, nil
+	}
+	value, ok := pb.KeyspaceIdType_value[strings.ToUpper(param)]
+	if !ok {
+		return pb.KeyspaceIdType_UNSET, fmt.Errorf("unknown KeyspaceIdType %v", param)
+	}
+	return pb.KeyspaceIdType(value), nil
+}
+
+// parseTabletType3 parses the tablet type into the enum
+func parseTabletType3(param string) (pb.TabletType, error) {
+	value, ok := pb.TabletType_value[strings.ToUpper(param)]
+	if !ok {
+		return pb.TabletType_UNKNOWN, fmt.Errorf("unknown TabletType %v", param)
+	}
+	return pb.TabletType(value), nil
+}
+
+// parseServingTabletType3 parses the tablet type into the enum,
+// and makes sure the enum is of serving type (MASTER, REPLICA, RDONLY/BATCH)
+func parseServingTabletType3(param string) (pb.TabletType, error) {
+	servedType, err := parseTabletType3(param)
+	if err != nil {
+		return pb.TabletType_UNKNOWN, err
+	}
+	if !topo.IsInServingGraph(topo.ProtoToTabletType(servedType)) {
+		return pb.TabletType_UNKNOWN, fmt.Errorf("served_type has to be in the serving graph, not %v", param)
+	}
+	return servedType, nil
+}
+
 func commandInitTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
 	var (
 		dbNameOverride = subFlags.String("db-name-override", "", "Overrides the name of the database that the vttablet uses")
@@ -572,7 +607,7 @@ func commandInitTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags *fla
 		hostname       = subFlags.String("hostname", "", "The server on which the tablet is running")
 		mysqlPort      = subFlags.Int("mysql_port", 0, "The mysql port for the mysql daemon")
 		port           = subFlags.Int("port", 0, "The main port for the vttablet process")
-		vtsPort        = subFlags.Int("vts_port", 0, "The encrypted port for the vttablet process")
+		grpcPort       = subFlags.Int("grpc_port", 0, "The gRPC port for the vttablet process")
 		keyspace       = subFlags.String("keyspace", "", "The keyspace to which this tablet belongs")
 		shard          = subFlags.String("shard", "", "The shard to which this tablet belongs")
 		tags           flagutil.StringMapValue
@@ -611,8 +646,8 @@ func commandInitTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags *fla
 	if *mysqlPort != 0 {
 		tablet.Portmap["mysql"] = *mysqlPort
 	}
-	if *vtsPort != 0 {
-		tablet.Portmap["vts"] = *vtsPort
+	if *grpcPort != 0 {
+		tablet.Portmap["grpc"] = *grpcPort
 	}
 
 	return wr.InitTablet(ctx, tablet, *force, *parent, *update)
@@ -642,7 +677,7 @@ func commandUpdateTabletAddrs(ctx context.Context, wr *wrangler.Wrangler, subFla
 	ipAddr := subFlags.String("ip-addr", "", "IP address")
 	mysqlPort := subFlags.Int("mysql-port", 0, "The mysql port for the mysql daemon")
 	vtPort := subFlags.Int("vt-port", 0, "The main port for the vttablet process")
-	vtsPort := subFlags.Int("vts-port", 0, "The encrypted port for the vttablet process")
+	grpcPort := subFlags.Int("grpc-port", 0, "The gRPC port for the vttablet process")
 	if err := subFlags.Parse(args); err != nil {
 		return err
 	}
@@ -665,15 +700,15 @@ func commandUpdateTabletAddrs(ctx context.Context, wr *wrangler.Wrangler, subFla
 		if *ipAddr != "" {
 			tablet.IPAddr = *ipAddr
 		}
-		if *vtPort != 0 || *vtsPort != 0 || *mysqlPort != 0 {
+		if *vtPort != 0 || *grpcPort != 0 || *mysqlPort != 0 {
 			if tablet.Portmap == nil {
 				tablet.Portmap = make(map[string]int)
 			}
 			if *vtPort != 0 {
 				tablet.Portmap["vt"] = *vtPort
 			}
-			if *vtsPort != 0 {
-				tablet.Portmap["vts"] = *vtsPort
+			if *grpcPort != 0 {
+				tablet.Portmap["grpc"] = *grpcPort
 			}
 			if *mysqlPort != 0 {
 				tablet.Portmap["mysql"] = *mysqlPort
@@ -998,7 +1033,7 @@ func commandCreateShard(ctx context.Context, wr *wrangler.Wrangler, subFlags *fl
 		return err
 	}
 	if *parent {
-		if err := wr.TopoServer().CreateKeyspace(ctx, keyspace, &topo.Keyspace{}); err != nil && err != topo.ErrNodeExists {
+		if err := wr.TopoServer().CreateKeyspace(ctx, keyspace, &pb.Keyspace{}); err != nil && err != topo.ErrNodeExists {
 			return err
 		}
 	}
@@ -1150,7 +1185,8 @@ func commandSetShardServedTypes(ctx context.Context, wr *wrangler.Wrangler, subF
 	if err != nil {
 		return err
 	}
-	servedType, err := parseTabletType(subFlags.Arg(1), []topo.TabletType{topo.TYPE_MASTER, topo.TYPE_REPLICA, topo.TYPE_RDONLY})
+
+	servedType, err := parseServingTabletType3(subFlags.Arg(1))
 	if err != nil {
 		return err
 	}
@@ -1177,7 +1213,7 @@ func commandSetShardTabletControl(ctx context.Context, wr *wrangler.Wrangler, su
 	if err != nil {
 		return err
 	}
-	tabletType, err := parseTabletType(subFlags.Arg(1), []topo.TabletType{topo.TYPE_MASTER, topo.TYPE_REPLICA, topo.TYPE_RDONLY})
+	tabletType, err := parseServingTabletType3(subFlags.Arg(1))
 	if err != nil {
 		return err
 	}
@@ -1237,7 +1273,7 @@ func commandSourceShardAdd(ctx context.Context, wr *wrangler.Wrangler, subFlags 
 	if *tablesStr != "" {
 		tables = strings.Split(*tablesStr, ",")
 	}
-	var kr key.KeyRange
+	var kr *pb.KeyRange
 	if *keyRange != "" {
 		if _, kr, err = topo.ValidateShardName(*keyRange); err != nil {
 			return err
@@ -1359,28 +1395,28 @@ func commandCreateKeyspace(ctx context.Context, wr *wrangler.Wrangler, subFlags 
 	}
 
 	keyspace := subFlags.Arg(0)
-	kit := key.KeyspaceIdType(*shardingColumnType)
-	if !key.IsKeyspaceIdTypeInList(kit, key.AllKeyspaceIdTypes) {
-		return fmt.Errorf("The sharding_column_type flag specifies an invalid value.")
+	kit, err := parseKeyspaceIdType(*shardingColumnType)
+	if err != nil {
+		return err
 	}
-	ki := &topo.Keyspace{
+	ki := &pb.Keyspace{
 		ShardingColumnName: *shardingColumnName,
 		ShardingColumnType: kit,
 		SplitShardCount:    int32(*splitShardCount),
 	}
 	if len(servedFrom) > 0 {
-		ki.ServedFromMap = make(map[topo.TabletType]*topo.KeyspaceServedFrom, len(servedFrom))
 		for name, value := range servedFrom {
-			tt := topo.TabletType(name)
-			if !topo.IsInServingGraph(tt) {
-				return fmt.Errorf("The served_from flag specifies a database (tablet) type that is not in the serving graph. The invalid value is: %v", tt)
+			tt, err := parseServingTabletType3(name)
+			if err != nil {
+				return err
 			}
-			ki.ServedFromMap[tt] = &topo.KeyspaceServedFrom{
-				Keyspace: value,
-			}
+			ki.ServedFroms = append(ki.ServedFroms, &pb.Keyspace_ServedFrom{
+				TabletType: tt,
+				Keyspace:   value,
+			})
 		}
 	}
-	err := wr.TopoServer().CreateKeyspace(ctx, keyspace, ki)
+	err = wr.TopoServer().CreateKeyspace(ctx, keyspace, ki)
 	if *force && err == topo.ErrNodeExists {
 		log.Infof("keyspace %v already exists (ignoring error with -force)", keyspace)
 		err = nil
@@ -1444,11 +1480,12 @@ func commandSetKeyspaceShardingInfo(ctx context.Context, wr *wrangler.Wrangler, 
 	if subFlags.NArg() >= 2 {
 		columnName = subFlags.Arg(1)
 	}
-	kit := key.KIT_UNSET
+	kit := pb.KeyspaceIdType_UNSET
 	if subFlags.NArg() >= 3 {
-		kit = key.KeyspaceIdType(subFlags.Arg(2))
-		if !key.IsKeyspaceIdTypeInList(kit, key.AllKeyspaceIdTypes) {
-			return fmt.Errorf("The <column type> argument specifies an invalid value for the sharding_column_type.")
+		var err error
+		kit, err = parseKeyspaceIdType(subFlags.Arg(2))
+		if err != nil {
+			return err
 		}
 	}
 
@@ -1475,7 +1512,7 @@ func commandSetKeyspaceServedFrom(ctx context.Context, wr *wrangler.Wrangler, su
 		cells = strings.Split(*cellsStr, ",")
 	}
 
-	return wr.SetKeyspaceServedFrom(ctx, keyspace, servedType, cells, *source, *remove)
+	return wr.SetKeyspaceServedFrom(ctx, keyspace, topo.TabletTypeToProto(servedType), cells, *source, *remove)
 }
 
 func commandRebuildKeyspaceGraph(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
@@ -1534,11 +1571,11 @@ func commandMigrateServedTypes(ctx context.Context, wr *wrangler.Wrangler, subFl
 	if err != nil {
 		return err
 	}
-	servedType, err := parseTabletType(subFlags.Arg(1), []topo.TabletType{topo.TYPE_MASTER, topo.TYPE_REPLICA, topo.TYPE_RDONLY})
+	servedType, err := parseServingTabletType3(subFlags.Arg(1))
 	if err != nil {
 		return err
 	}
-	if servedType == topo.TYPE_MASTER && *skipReFreshState {
+	if servedType == pb.TabletType_MASTER && *skipReFreshState {
 		return fmt.Errorf("The skip-refresh-state flag can only be specified for non-master migrations.")
 	}
 	var cells []string
@@ -1571,7 +1608,7 @@ func commandMigrateServedFrom(ctx context.Context, wr *wrangler.Wrangler, subFla
 	if *cellsStr != "" {
 		cells = strings.Split(*cellsStr, ",")
 	}
-	return wr.MigrateServedFrom(ctx, keyspace, shard, servedType, cells, *reverse, *filteredReplicationWaitTime)
+	return wr.MigrateServedFrom(ctx, keyspace, shard, topo.TabletTypeToProto(servedType), cells, *reverse, *filteredReplicationWaitTime)
 }
 
 func commandFindAllShardsInKeyspace(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
@@ -1618,7 +1655,7 @@ func commandResolve(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.F
 		return err
 	}
 	for _, addr := range addrs {
-		wr.Logger().Printf("%v\n", netutil.JoinHostPort(addr.Target, int(addr.Port)))
+		wr.Logger().Printf("%v\n", netutil.JoinHostPort(addr.Target, int32(addr.Port)))
 	}
 	return nil
 }

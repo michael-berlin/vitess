@@ -17,6 +17,8 @@ import (
 	"github.com/youtube/vitess/go/zk/fakezk"
 	"golang.org/x/net/context"
 	"launchpad.net/gozk/zookeeper"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 func createSetup(ctx context.Context, t *testing.T) (topo.Server, topo.Server) {
@@ -33,10 +35,10 @@ func createSetup(ctx context.Context, t *testing.T) (topo.Server, topo.Server) {
 	}
 
 	// create a keyspace and a couple tablets
-	if err := fromTS.CreateKeyspace(ctx, "test_keyspace", &topo.Keyspace{}); err != nil {
+	if err := fromTS.CreateKeyspace(ctx, "test_keyspace", &pb.Keyspace{}); err != nil {
 		t.Fatalf("cannot create keyspace: %v", err)
 	}
-	if err := fromTS.CreateShard(ctx, "test_keyspace", "0", &topo.Shard{Cells: []string{"test_cell"}}); err != nil {
+	if err := fromTS.CreateShard(ctx, "test_keyspace", "0", &pb.Shard{Cells: []string{"test_cell"}}); err != nil {
 		t.Fatalf("cannot create shard: %v", err)
 	}
 	if err := topo.CreateTablet(ctx, fromTS, &topo.Tablet{
@@ -48,7 +50,7 @@ func createSetup(ctx context.Context, t *testing.T) (topo.Server, topo.Server) {
 		IPAddr:   "1.2.3.4",
 		Portmap: map[string]int{
 			"vt":    8101,
-			"vts":   8102,
+			"gprc":  8102,
 			"mysql": 3306,
 		},
 		Keyspace:       "test_keyspace",
@@ -67,7 +69,7 @@ func createSetup(ctx context.Context, t *testing.T) (topo.Server, topo.Server) {
 		IPAddr: "2.3.4.5",
 		Portmap: map[string]int{
 			"vt":    8101,
-			"vts":   8102,
+			"grpc":  8102,
 			"mysql": 3306,
 		},
 		Hostname: "slavehost",
@@ -134,7 +136,7 @@ func TestBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("toTS.GetShardReplication failed: %v", err)
 	}
-	if len(sr.ReplicationLinks) != 2 {
+	if len(sr.Nodes) != 2 {
 		t.Fatalf("unexpected ShardReplication: %v", sr)
 	}
 

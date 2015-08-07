@@ -11,6 +11,8 @@ import (
 
 	log "github.com/golang/glog"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 var (
@@ -70,7 +72,7 @@ type Server interface {
 
 	// CreateKeyspace creates the given keyspace, assuming it doesn't exist
 	// yet. Can return ErrNodeExists if it already exists.
-	CreateKeyspace(ctx context.Context, keyspace string, value *Keyspace) error
+	CreateKeyspace(ctx context.Context, keyspace string, value *pb.Keyspace) error
 
 	// UpdateKeyspace updates the keyspace information
 	// pointed at by ki.keyspace to the *ki value.
@@ -104,7 +106,7 @@ type Server interface {
 	// yet. The contents of the shard will be a new Shard{} object,
 	// with KeyRange populated by the result of ValidateShardName().
 	// Can return ErrNodeExists if it already exists.
-	CreateShard(ctx context.Context, keyspace, shard string, value *Shard) error
+	CreateShard(ctx context.Context, keyspace, shard string, value *pb.Shard) error
 
 	// UpdateShard updates the shard information
 	// pointed at by si.keyspace / si.shard to the *si value.
@@ -176,7 +178,7 @@ type Server interface {
 	// ShardReplication object does not exist, an empty one will
 	// be passed to the update function. All necessary directories
 	// need to be created by this method, if applicable.
-	UpdateShardReplicationFields(ctx context.Context, cell, keyspace, shard string, update func(*ShardReplication) error) error
+	UpdateShardReplicationFields(ctx context.Context, cell, keyspace, shard string, update func(*pb.ShardReplication) error) error
 
 	// GetShardReplication returns the replication data.
 	// Can return ErrNoNode if the object doesn't exist.
@@ -213,7 +215,7 @@ type Server interface {
 	// CreateEndPoints creates and sets the serving records for a cell,
 	// keyspace, shard, tabletType.
 	// It returns ErrNodeExists if the record already exists.
-	CreateEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType TabletType, addrs *EndPoints) error
+	CreateEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType TabletType, addrs *pb.EndPoints) error
 
 	// UpdateEndPoints updates the serving records for a cell,
 	// keyspace, shard, tabletType.
@@ -222,12 +224,12 @@ type Server interface {
 	// Otherwise, it will Compare-And-Set only if the version matches.
 	// Can return ErrBadVersion.
 	// Can return ErrNoNode only if existingVersion is not -1.
-	UpdateEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType TabletType, addrs *EndPoints, existingVersion int64) error
+	UpdateEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType TabletType, addrs *pb.EndPoints, existingVersion int64) error
 
 	// GetEndPoints returns the EndPoints list of serving addresses
 	// for a TabletType inside a shard, as well as the node version.
 	// Can return ErrNoNode.
-	GetEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType TabletType) (ep *EndPoints, version int64, err error)
+	GetEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType TabletType) (ep *pb.EndPoints, version int64, err error)
 
 	// DeleteEndPoints deletes the serving records for a cell,
 	// keyspace, shard, tabletType.
@@ -249,15 +251,15 @@ type Server interface {
 	// that are never going to work. Mutiple notifications with the
 	// same contents may be sent (for instance when the serving graph
 	// is rebuilt, but the content hasn't changed).
-	WatchEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType TabletType) (notifications <-chan *EndPoints, stopWatching chan<- struct{}, err error)
+	WatchEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType TabletType) (notifications <-chan *pb.EndPoints, stopWatching chan<- struct{}, err error)
 
 	// UpdateSrvShard updates the serving records for a cell,
 	// keyspace, shard.
-	UpdateSrvShard(ctx context.Context, cell, keyspace, shard string, srvShard *SrvShard) error
+	UpdateSrvShard(ctx context.Context, cell, keyspace, shard string, srvShard *pb.SrvShard) error
 
 	// GetSrvShard reads a SrvShard record.
 	// Can return ErrNoNode.
-	GetSrvShard(ctx context.Context, cell, keyspace, shard string) (*SrvShard, error)
+	GetSrvShard(ctx context.Context, cell, keyspace, shard string) (*pb.SrvShard, error)
 
 	// DeleteSrvShard deletes a SrvShard record.
 	// Can return ErrNoNode.

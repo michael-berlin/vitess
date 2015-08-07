@@ -6,6 +6,8 @@ import (
 	"github.com/youtube/vitess/go/vt/topo"
 	"github.com/youtube/vitess/go/vt/vtgate"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // TopoReader implements topo.TopoReader.
@@ -56,7 +58,7 @@ func (tr *TopoReader) GetSrvKeyspace(ctx context.Context, req *topo.GetSrvKeyspa
 
 // GetSrvShard returns information about a shard for a keyspace
 // in a particular cell.
-func (tr *TopoReader) GetSrvShard(ctx context.Context, req *topo.GetSrvShardArgs, reply *topo.SrvShard) (err error) {
+func (tr *TopoReader) GetSrvShard(ctx context.Context, req *topo.GetSrvShardArgs, reply *pb.SrvShard) (err error) {
 	tr.queryCount.Add(req.Cell, 1)
 	shard, err := tr.ts.GetSrvShard(ctx, req.Cell, req.Keyspace, req.Shard)
 	if err != nil {
@@ -70,7 +72,7 @@ func (tr *TopoReader) GetSrvShard(ctx context.Context, req *topo.GetSrvShardArgs
 
 // GetEndPoints returns addresses for a tablet type in a shard
 // in a keyspace.
-func (tr *TopoReader) GetEndPoints(ctx context.Context, req *topo.GetEndPointsArgs, reply *topo.EndPoints) (err error) {
+func (tr *TopoReader) GetEndPoints(ctx context.Context, req *topo.GetEndPointsArgs, reply *pb.EndPoints) (err error) {
 	tr.queryCount.Add(req.Cell, 1)
 	addrs, _, err := tr.ts.GetEndPoints(ctx, req.Cell, req.Keyspace, req.Shard, req.TabletType)
 	if err != nil {

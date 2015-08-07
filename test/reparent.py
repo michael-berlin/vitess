@@ -6,11 +6,6 @@ import warnings
 warnings.simplefilter('ignore')
 
 import logging
-import os
-import shutil
-import signal
-from subprocess import PIPE
-import time
 import unittest
 
 import environment
@@ -104,7 +99,7 @@ class TestReparent(unittest.TestCase):
                                db_type])
     self.assertEqual(
         len(ep['entries']), 1, 'Wrong number of entries: %s' % str(ep))
-    port = ep['entries'][0]['named_port_map']['vt']
+    port = ep['entries'][0]['port_map']['vt']
     self.assertEqual(port, expected_port,
                      'Unexpected port: %u != %u from %s' % (port, expected_port,
                                                             str(ep)))
@@ -114,6 +109,11 @@ class TestReparent(unittest.TestCase):
       self.fail(
           'Invalid hostname %s was expecting something starting with %s' %
           (host, 'localhost'))
+
+  def _check_master_cell(self, cell, shard_id, master_cell):
+    srvShard = utils.run_vtctl_json(['GetSrvShard', cell,
+                                     'test_keyspace/%s' % (shard_id)])
+    self.assertEqual(srvShard['master_cell'], master_cell)
 
   def test_master_to_spare_state_change_impossible(self):
     utils.run_vtctl(['CreateKeyspace', 'test_keyspace'])
@@ -175,20 +175,16 @@ class TestReparent(unittest.TestCase):
 
     # Perform a planned reparent operation, will try to contact
     # the current master and fail somewhat quickly
-    stdout, stderr = utils.run_vtctl(['-wait-time', '5s',
-                                      'PlannedReparentShard', 'test_keyspace/0',
-                                      tablet_62044.tablet_alias],
-                                     expect_fail=True)
-    logging.debug('Failed PlannedReparentShard output:\n' + stderr)
-    if 'DemoteMaster failed' not in stderr:
-      self.fail(
-          "didn't find the right error strings in failed PlannedReparentShard: " +
-          stderr)
+    _, stderr = utils.run_vtctl(['-wait-time', '5s',
+                                 'PlannedReparentShard', 'test_keyspace/0',
+                                 tablet_62044.tablet_alias],
+                                expect_fail=True)
+    self.assertIn('DemoteMaster failed', stderr)
 
     # Should fail to connect and fail
-    stdout, stderr = utils.run_vtctl(['-wait-time', '10s', 'ScrapTablet',
-                                      tablet_62344.tablet_alias],
-                                     expect_fail=True)
+    _, stderr = utils.run_vtctl(['-wait-time', '10s', 'ScrapTablet',
+                                 tablet_62344.tablet_alias],
+                                expect_fail=True)
     logging.debug('Failed ScrapTablet output:\n' + stderr)
     if 'connection refused' not in stderr and protocols_flavor().rpc_timeout_message() not in stderr:
       self.fail("didn't find the right error strings in failed ScrapTablet: " +
@@ -235,8 +231,8 @@ class TestReparent(unittest.TestCase):
     tablet_62344.init_tablet('master', 'test_keyspace', shard_id, start=True,
                              wait_for_start=False)
     shard = utils.run_vtctl_json(['GetShard', 'test_keyspace/' + shard_id])
-    self.assertEqual(shard['Cells'], ['test_nj'],
-                     'wrong list of cell in Shard: %s' % str(shard['Cells']))
+    self.assertEqual(shard['cells'], ['test_nj'],
+                     'wrong list of cell in Shard: %s' % str(shard['cells']))
 
     # Create a few slaves for testing reparenting.
     tablet_62044.init_tablet('replica', 'test_keyspace', shard_id, start=True,
@@ -249,8 +245,8 @@ class TestReparent(unittest.TestCase):
       t.wait_for_vttablet_state('SERVING')
     shard = utils.run_vtctl_json(['GetShard', 'test_keyspace/' + shard_id])
     self.assertEqual(
-        shard['Cells'], ['test_nj', 'test_ny'],
-        'wrong list of cell in Shard: %s' % str(shard['Cells']))
+        shard['cells'], ['test_nj', 'test_ny'],
+        'wrong list of cell in Shard: %s' % str(shard['cells']))
 
     # Recompute the shard layout node - until you do that, it might not be
     # valid.
@@ -267,12 +263,8 @@ class TestReparent(unittest.TestCase):
     self._check_db_addr(shard_id, 'master', tablet_62344.port)
 
     # Verify MasterCell is properly set
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/%s' % (shard_id)])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_ny',
-                                     'test_keyspace/%s' % (shard_id)])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_master_cell('test_nj', shard_id, 'test_nj')
+    self._check_master_cell('test_ny', shard_id, 'test_nj')
 
     # Perform a graceful reparent operation to another cell.
     utils.pause('test_reparent_cross_cell PlannedReparentShard')
@@ -283,12 +275,8 @@ class TestReparent(unittest.TestCase):
     self._check_db_addr(shard_id, 'master', tablet_31981.port, cell='test_ny')
 
     # Verify MasterCell is set to new cell.
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/%s' % (shard_id)])
-    self.assertEqual(srvShard['MasterCell'], 'test_ny')
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_ny',
-                                     'test_keyspace/%s' % (shard_id)])
-    self.assertEqual(srvShard['MasterCell'], 'test_ny')
+    self._check_master_cell('test_nj', shard_id, 'test_ny')
+    self._check_master_cell('test_ny', shard_id, 'test_ny')
 
     tablet.kill_tablets([tablet_62344, tablet_62044, tablet_41983,
                          tablet_31981])
@@ -314,8 +302,8 @@ class TestReparent(unittest.TestCase):
     tablet_62344.init_tablet('master', 'test_keyspace', shard_id, start=True)
     if environment.topo_server().flavor() == 'zookeeper':
       shard = utils.run_vtctl_json(['GetShard', 'test_keyspace/' + shard_id])
-      self.assertEqual(shard['Cells'], ['test_nj'],
-                       'wrong list of cell in Shard: %s' % str(shard['Cells']))
+      self.assertEqual(shard['cells'], ['test_nj'],
+                       'wrong list of cell in Shard: %s' % str(shard['cells']))
 
     # Create a few slaves for testing reparenting.
     tablet_62044.init_tablet('replica', 'test_keyspace', shard_id, start=True,
@@ -328,8 +316,8 @@ class TestReparent(unittest.TestCase):
       t.wait_for_vttablet_state('SERVING')
     if environment.topo_server().flavor() == 'zookeeper':
       shard = utils.run_vtctl_json(['GetShard', 'test_keyspace/' + shard_id])
-      self.assertEqual(shard['Cells'], ['test_nj', 'test_ny'],
-                       'wrong list of cell in Shard: %s' % str(shard['Cells']))
+      self.assertEqual(shard['cells'], ['test_nj', 'test_ny'],
+                       'wrong list of cell in Shard: %s' % str(shard['cells']))
 
     # Recompute the shard layout node - until you do that, it might not be
     # valid.
@@ -347,12 +335,8 @@ class TestReparent(unittest.TestCase):
     self._check_db_addr(shard_id, 'master', tablet_62344.port)
 
     # Verify MasterCell is set to new cell.
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/%s' % (shard_id)])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_ny',
-                                     'test_keyspace/%s' % (shard_id)])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_master_cell('test_nj', shard_id, 'test_nj')
+    self._check_master_cell('test_ny', shard_id, 'test_nj')
 
     # Convert two replica to spare. That should leave only one node serving traffic,
     # but still needs to appear in the replication graph.
@@ -379,12 +363,8 @@ class TestReparent(unittest.TestCase):
     self._check_vt_insert_test(tablet_62344, 1)
 
     # Verify MasterCell is set to new cell.
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/%s' % (shard_id)])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_ny',
-                                     'test_keyspace/%s' % (shard_id)])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_master_cell('test_nj', shard_id, 'test_nj')
+    self._check_master_cell('test_ny', shard_id, 'test_nj')
 
     tablet.kill_tablets([tablet_62344, tablet_62044, tablet_41983,
                          tablet_31981])
@@ -508,9 +488,9 @@ class TestReparent(unittest.TestCase):
     logging.debug('New master position: %s', str(new_pos))
     # Use "localhost" as hostname because Travis CI worker hostnames are too long for MySQL replication.
     changeMasterCmds = mysql_flavor().change_master_commands(
-                            "localhost",
-                            tablet_62044.mysql_port,
-                            new_pos)
+        'localhost',
+        tablet_62044.mysql_port,
+        new_pos)
 
     # 62344 will now be a slave of 62044
     tablet_62344.mquery('', ['RESET MASTER', 'RESET SLAVE'] +
@@ -550,23 +530,24 @@ class TestReparent(unittest.TestCase):
     # make sure the shard replication graph is fine
     shard_replication = utils.run_vtctl_json(['GetShardReplication', 'test_nj',
                                               'test_keyspace/0'])
-    hashed_links = {}
-    for rl in shard_replication['ReplicationLinks']:
-      key = rl['TabletAlias']['Cell'] + '-' + str(rl['TabletAlias']['Uid'])
-      hashed_links[key] = True
-    logging.debug('Got replication links: %s', str(hashed_links))
-    expected_links = {
+    hashed_nodes = {}
+    for node in shard_replication['nodes']:
+      key = node['tablet_alias']['cell']+'-'+str(node['tablet_alias']['uid'])
+      hashed_nodes[key] = True
+    logging.debug('Got shard replication nodes: %s', str(hashed_nodes))
+    expected_nodes = {
         'test_nj-41983': True,
         'test_nj-62044': True,
         }
     if not brutal:
-      expected_links['test_nj-62344'] = True
-    self.assertEqual(expected_links, hashed_links,
-                     'Got unexpected links: %s != %s' % (str(expected_links),
-                                                         str(hashed_links)))
+      expected_nodes['test_nj-62344'] = True
+    self.assertEqual(expected_nodes, hashed_nodes,
+                     'Got unexpected nodes: %s != %s' % (str(expected_nodes),
+                                                         str(hashed_nodes)))
 
     tablet_62044_master_status = tablet_62044.get_status()
-    self.assertIn('Serving graph: test_keyspace 0 master', tablet_62044_master_status)
+    self.assertIn('Serving graph: test_keyspace 0 master',
+                  tablet_62044_master_status)
 
   # See if a missing slave can be safely reparented after the fact.
   def test_reparent_with_down_slave(self, shard_id='0'):
@@ -611,14 +592,11 @@ class TestReparent(unittest.TestCase):
     utils.wait_procs([tablet_41983.shutdown_mysql()])
 
     # Perform a graceful reparent operation. It will fail as one tablet is down.
-    stdout, stderr = utils.run_vtctl(['PlannedReparentShard',
-                                      'test_keyspace/' + shard_id,
-                                      tablet_62044.tablet_alias],
-                                      expect_fail=True)
-    if 'TabletManager.SetMaster on test_nj-0000041983 error' not in stderr:
-      self.fail(
-          "didn't find the right error strings in failed PlannedReparentShard: " +
-          stderr)
+    _, stderr = utils.run_vtctl(['PlannedReparentShard',
+                                 'test_keyspace/' + shard_id,
+                                 tablet_62044.tablet_alias],
+                                expect_fail=True)
+    self.assertIn('TabletManager.SetMaster on test_nj-0000041983 error', stderr)
 
     # insert data into the new master, check the connected slaves work
     self._populate_vt_insert_test(tablet_62044, 3)

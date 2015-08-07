@@ -7,14 +7,13 @@ package grpctabletconn
 import (
 	"net"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 
 	"github.com/youtube/vitess/go/vt/tabletserver/grpcqueryservice"
 	"github.com/youtube/vitess/go/vt/tabletserver/tabletconntest"
-	"github.com/youtube/vitess/go/vt/topo"
-	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // This test makes sure the go rpc service works
@@ -35,21 +34,11 @@ func TestGoRPCTabletConn(t *testing.T) {
 	grpcqueryservice.RegisterForTest(server, service)
 	go server.Serve(listener)
 
-	// Create a gRPC client connecting to the server
-	ctx := context.Background()
-	client, err := DialTablet(ctx, topo.EndPoint{
-		Host: host,
-		NamedPortMap: map[string]int{
-			"grpc": port,
-		},
-	}, tabletconntest.TestKeyspace, tabletconntest.TestShard, 30*time.Second)
-	if err != nil {
-		t.Fatalf("dial failed: %v", err)
-	}
-
 	// run the test suite
-	tabletconntest.TestSuite(t, client, service)
-
-	// and clean up
-	client.Close()
+	tabletconntest.TestSuite(t, protocolName, &pb.EndPoint{
+		Host: host,
+		PortMap: map[string]int32{
+			"grpc": int32(port),
+		},
+	}, service)
 }

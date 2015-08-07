@@ -18,14 +18,15 @@ import (
 	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
 	"github.com/youtube/vitess/go/vt/binlog/proto"
 	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/topo"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // keyRangeRequest is used to make a request for StreamKeyRange.
 type keyRangeRequest struct {
 	Position       string
 	KeyspaceIdType key.KeyspaceIdType
-	KeyRange       key.KeyRange
+	KeyRange       *pb.KeyRange
 	Charset        *mproto.Charset
 }
 
@@ -131,9 +132,9 @@ func testServeUpdateStreamPanics(t *testing.T, bpc binlogplayer.Client) {
 var testKeyRangeRequest = &keyRangeRequest{
 	Position:       "KeyRange starting position",
 	KeyspaceIdType: key.KIT_UINT64,
-	KeyRange: key.KeyRange{
-		Start: key.Uint64Key(0x7000000000000000).KeyspaceId(),
-		End:   key.Uint64Key(0x9000000000000000).KeyspaceId(),
+	KeyRange: &pb.KeyRange{
+		Start: key.Uint64Key(0x7000000000000000).Bytes(),
+		End:   key.Uint64Key(0x9000000000000000).Bytes(),
 	},
 	Charset: &mproto.Charset{
 		Client: 12,
@@ -159,7 +160,7 @@ var testBinlogTransaction = &proto.BinlogTransaction{
 }
 
 // StreamKeyRange is part of the the UpdateStream interface
-func (fake *FakeBinlogStreamer) StreamKeyRange(position string, keyspaceIdType key.KeyspaceIdType, keyRange key.KeyRange, charset *mproto.Charset, sendReply func(reply *proto.BinlogTransaction) error) error {
+func (fake *FakeBinlogStreamer) StreamKeyRange(position string, keyspaceIdType key.KeyspaceIdType, keyRange *pb.KeyRange, charset *mproto.Charset, sendReply func(reply *proto.BinlogTransaction) error) error {
 	if fake.panics {
 		panic(fmt.Errorf("test-triggered panic"))
 	}
@@ -287,7 +288,7 @@ func (fake *FakeBinlogStreamer) HandlePanic(err *error) {
 }
 
 // Run runs the test suite
-func Run(t *testing.T, bpc binlogplayer.Client, endPoint topo.EndPoint, fake *FakeBinlogStreamer) {
+func Run(t *testing.T, bpc binlogplayer.Client, endPoint *pb.EndPoint, fake *FakeBinlogStreamer) {
 	if err := bpc.Dial(endPoint, 30*time.Second); err != nil {
 		t.Fatalf("Dial failed: %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/youtube/vitess/go/vt/key"
+
 	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
@@ -25,6 +26,9 @@ func TabletAliasToProto(t TabletAlias) *pb.TabletAlias {
 
 // ProtoToTabletAlias turns a proto to a TabletAlias
 func ProtoToTabletAlias(t *pb.TabletAlias) TabletAlias {
+	if t == nil {
+		return TabletAlias{}
+	}
 	return TabletAlias{
 		Cell: t.Cell,
 		Uid:  t.Uid,
@@ -50,7 +54,7 @@ func TabletToProto(t *Tablet) *pb.Tablet {
 		Alias:          TabletAliasToProto(t.Alias),
 		Hostname:       t.Hostname,
 		Ip:             t.IPAddr,
-		Portmap:        make(map[string]int32),
+		PortMap:        make(map[string]int32),
 		Keyspace:       t.Keyspace,
 		Shard:          t.Shard,
 		KeyRange:       key.KeyRangeToProto(t.KeyRange),
@@ -60,7 +64,7 @@ func TabletToProto(t *Tablet) *pb.Tablet {
 		HealthMap:      t.Health,
 	}
 	for k, v := range t.Portmap {
-		result.Portmap[k] = int32(v)
+		result.PortMap[k] = int32(v)
 	}
 	return result
 }
@@ -80,8 +84,65 @@ func ProtoToTablet(t *pb.Tablet) *Tablet {
 		Tags:           t.Tags,
 		Health:         t.HealthMap,
 	}
-	for k, v := range t.Portmap {
+	for k, v := range t.PortMap {
 		result.Portmap[k] = int(v)
+	}
+	return result
+}
+
+// SrvKeyspaceToProto turns a Tablet into a proto
+func SrvKeyspaceToProto(s *SrvKeyspace) *pb.SrvKeyspace {
+	result := &pb.SrvKeyspace{
+		ShardingColumnName: s.ShardingColumnName,
+		ShardingColumnType: key.KeyspaceIdTypeToProto(s.ShardingColumnType),
+		SplitShardCount:    s.SplitShardCount,
+	}
+	for tt, p := range s.Partitions {
+		partition := &pb.SrvKeyspace_KeyspacePartition{
+			ServedType: TabletTypeToProto(tt),
+		}
+		for _, sr := range p.ShardReferences {
+			partition.ShardReferences = append(partition.ShardReferences, &pb.ShardReference{
+				Name:     sr.Name,
+				KeyRange: key.KeyRangeToProto(sr.KeyRange),
+			})
+		}
+		result.Partitions = append(result.Partitions, partition)
+	}
+	for tt, k := range s.ServedFrom {
+		result.ServedFrom = append(result.ServedFrom, &pb.SrvKeyspace_ServedFrom{
+			TabletType: TabletTypeToProto(tt),
+			Keyspace:   k,
+		})
+	}
+	return result
+}
+
+// ProtoToSrvKeyspace turns a proto to a Tablet
+func ProtoToSrvKeyspace(s *pb.SrvKeyspace) *SrvKeyspace {
+	result := &SrvKeyspace{
+		Partitions:         make(map[TabletType]*KeyspacePartition),
+		ShardingColumnName: s.ShardingColumnName,
+		ShardingColumnType: key.ProtoToKeyspaceIdType(s.ShardingColumnType),
+		SplitShardCount:    s.SplitShardCount,
+	}
+	for _, p := range s.Partitions {
+		tt := ProtoToTabletType(p.ServedType)
+		partition := &KeyspacePartition{}
+		for _, sr := range p.ShardReferences {
+			partition.ShardReferences = append(partition.ShardReferences, ShardReference{
+				Name:     sr.Name,
+				KeyRange: key.ProtoToKeyRange(sr.KeyRange),
+			})
+		}
+		result.Partitions[tt] = partition
+	}
+	if len(s.ServedFrom) > 0 {
+		result.ServedFrom = make(map[TabletType]string)
+		for _, sf := range s.ServedFrom {
+			tt := ProtoToTabletType(sf.TabletType)
+			result.ServedFrom[tt] = sf.Keyspace
+		}
 	}
 	return result
 }

@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/youtube/vitess/go/vt/topo"
 	"github.com/youtube/vitess/go/vt/zktopo"
 	"golang.org/x/net/context"
 
 	. "github.com/youtube/vitess/go/vt/topotools"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // TestCreateShard tests a few cases for CreateShard
@@ -35,7 +36,7 @@ func TestCreateShard(t *testing.T) {
 	}
 
 	// create keyspace
-	if err := ts.CreateKeyspace(ctx, keyspace, &topo.Keyspace{}); err != nil {
+	if err := ts.CreateKeyspace(ctx, keyspace, &pb.Keyspace{}); err != nil {
 		t.Fatalf("CreateKeyspace failed: %v", err)
 	}
 
@@ -56,7 +57,7 @@ func TestCreateShardCustomSharding(t *testing.T) {
 
 	// create keyspace
 	keyspace := "test_keyspace"
-	if err := ts.CreateKeyspace(ctx, keyspace, &topo.Keyspace{}); err != nil {
+	if err := ts.CreateKeyspace(ctx, keyspace, &pb.Keyspace{}); err != nil {
 		t.Fatalf("CreateKeyspace failed: %v", err)
 	}
 
@@ -68,7 +69,7 @@ func TestCreateShardCustomSharding(t *testing.T) {
 	if si, err := ts.GetShard(ctx, keyspace, shard0); err != nil {
 		t.Fatalf("GetShard(shard0) failed: %v", err)
 	} else {
-		if len(si.ServedTypesMap) != 3 {
+		if len(si.ServedTypes) != 3 {
 			t.Fatalf("shard0 should have all 3 served types")
 		}
 	}
@@ -81,7 +82,7 @@ func TestCreateShardCustomSharding(t *testing.T) {
 	if si, err := ts.GetShard(ctx, keyspace, shard1); err != nil {
 		t.Fatalf("GetShard(shard1) failed: %v", err)
 	} else {
-		if len(si.ServedTypesMap) != 3 {
+		if len(si.ServedTypes) != 3 {
 			t.Fatalf("shard1 should have all 3 served types")
 		}
 	}

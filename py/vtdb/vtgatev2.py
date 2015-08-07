@@ -13,10 +13,11 @@ from vtdb import dbapi
 from vtdb import dbexceptions
 from vtdb import field_types
 from vtdb import keyrange
+from vtdb import keyspace
 from vtdb import vtdb_logger
+from vtdb import vtgate_client
 from vtdb import vtgate_cursor
 from vtdb import vtgate_utils
-
 
 _errno_pattern = re.compile('\(errno (\d+)\)')
 
@@ -106,17 +107,18 @@ def _create_req_with_keyranges(sql, new_binds, keyspace, tablet_type, keyranges,
 # A simple, direct connection to the vttablet query server.
 # This is shard-unaware and only handles the most basic communication.
 # If something goes wrong, this object should be thrown away and a new one instantiated.
-class VTGateConnection(object):
+class VTGateConnection(vtgate_client.VTGateClient):
   session = None
   _stream_fields = None
   _stream_conversions = None
   _stream_result = None
   _stream_result_index = None
 
-  def __init__(self, addr, timeout, user=None, password=None, encrypted=False, keyfile=None, certfile=None):
+  def __init__(self, addr, timeout, user=None, password=None,
+               keyfile=None, certfile=None):
     self.addr = addr
     self.timeout = timeout
-    self.client = bsonrpc.BsonRpcClient(addr, timeout, user, password, encrypted=encrypted, keyfile=keyfile, certfile=certfile)
+    self.client = bsonrpc.BsonRpcClient(addr, timeout, user, password, keyfile=keyfile, certfile=certfile)
     self.logger_object = vtdb_logger.get_logger()
 
   def __str__(self):
@@ -278,13 +280,15 @@ class VTGateConnection(object):
 
 
   @vtgate_utils.exponential_backoff_retry((dbexceptions.RequestBacklog))
-  def _execute_batch(self, sql_list, bind_variables_list, keyspace, tablet_type, keyspace_ids, not_in_transaction=False):
+  def _execute_batch(self, sql_list, bind_variables_list, keyspace_list, keyspace_ids_list, tablet_type, as_transaction):
     query_list = []
-    for sql, bind_vars in zip(sql_list, bind_variables_list):
+    for sql, bind_vars, keyspace, keyspace_ids in zip(sql_list, bind_variables_list, keyspace_list, keyspace_ids_list):
       sql, bind_vars = dbapi.prepare_query_bind_vars(sql, bind_vars)
       query = {}
       query['Sql'] = sql
       query['BindVariables'] = field_types.convert_bind_vars(bind_vars)
+      query['Keyspace'] = keyspace
+      query['KeyspaceIds'] = keyspace_ids
       query_list.append(query)
 
     rowsets = []
@@ -292,10 +296,8 @@ class VTGateConnection(object):
     try:
       req = {
           'Queries': query_list,
-          'Keyspace': keyspace,
           'TabletType': tablet_type,
-          'KeyspaceIds': keyspace_ids,
-          'NotInTransaction': not_in_transaction,
+          'AsTransaction': as_transaction,
       }
       self._add_session(req)
       response = self.client.call('VTGate.ExecuteBatchKeyspaceIds', req)
@@ -320,8 +322,8 @@ class VTGateConnection(object):
         rowsets.append((results, rowcount, lastrowid, fields))
     except gorpc.GoRpcError as e:
       self.logger_object.log_private_data(bind_variables_list)
-      raise convert_exception(e, str(self), sql_list, keyspace_ids,
-                              keyspace=keyspace, tablet_type=tablet_type)
+      raise convert_exception(e, str(self), sql_list, keyspace_ids_list,
+                              keyspace='', tablet_type=tablet_type)
     except:
       logging.exception('gorpc low-level error')
       raise
@@ -399,6 +401,18 @@ class VTGateConnection(object):
 
     return row
 
+  def get_srv_keyspace(self, name):
+    try:
+      response = self.client.call('VTGate.GetSrvKeyspace', {
+          'Keyspace': name,
+          })
+      return keyspace.Keyspace(name, response.reply)
+    except gorpc.GoRpcError as e:
+      raise convert_exception(e, str(self), keyspace=name)
+    except:
+      logging.exception('gorpc low-level error')
+      raise
+
 
 def _make_row(row, conversions):
   converted_row = []
@@ -413,16 +427,13 @@ def _make_row(row, conversions):
   return converted_row
 
 
-def get_params_for_vtgate_conn(vtgate_addrs, timeout, encrypted=False, user=None, password=None):
+def get_params_for_vtgate_conn(vtgate_addrs, timeout, user=None, password=None):
   db_params_list = []
   addrs = []
   if isinstance(vtgate_addrs, dict):
-    service = 'vt'
-    if encrypted:
-      service = 'vts'
-    if service not in vtgate_addrs:
-      raise Exception("required vtgate service addrs %s not exist" % service)
-    addrs = vtgate_addrs[service]
+    if 'vt' not in vtgate_addrs:
+      raise Exception("required vtgate service addrs 'vt' does not exist")
+    addrs = vtgate_addrs['vt']
     random.shuffle(addrs)
   elif isinstance(vtgate_addrs, list):
     random.shuffle(vtgate_addrs)
@@ -434,17 +445,15 @@ def get_params_for_vtgate_conn(vtgate_addrs, timeout, encrypted=False, user=None
     vt_params = dict()
     vt_params['addr'] = addr
     vt_params['timeout'] = timeout
-    vt_params['encrypted'] = encrypted
     vt_params['user'] = user
     vt_params['password'] = password
     db_params_list.append(vt_params)
   return db_params_list
 
 
-def connect(vtgate_addrs, timeout, encrypted=False, user=None, password=None):
+def connect(vtgate_addrs, timeout, user=None, password=None):
   db_params_list = get_params_for_vtgate_conn(vtgate_addrs, timeout,
-                                              encrypted=encrypted, user=user,
-                                              password=password)
+                                              user=user, password=password)
 
   if not db_params_list:
    raise dbexceptions.OperationalError("empty db params list - no db instance available for vtgate_addrs %s" % vtgate_addrs)
@@ -464,3 +473,5 @@ def connect(vtgate_addrs, timeout, encrypted=False, user=None, password=None):
 
   raise dbexceptions.OperationalError(
     'unable to create vt connection', host_addr, db_exception)
+
+vtgate_client.register_conn_class('gorpc', VTGateConnection)

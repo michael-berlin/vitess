@@ -13,10 +13,12 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"time"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 
+	"github.com/youtube/vitess/go/vt/key"
 	"github.com/youtube/vitess/go/vt/mysqlctl"
 	"github.com/youtube/vitess/go/vt/tabletmanager"
 	"github.com/youtube/vitess/go/vt/tabletmanager/grpctmserver"
@@ -54,7 +56,7 @@ type FakeTablet struct {
 
 	// These optional fields are used if the tablet also needs to
 	// listen on the 'vt' port.
-	StartHttpServer bool
+	StartHTTPServer bool
 	HTTPListener    net.Listener
 	HTTPServer      http.Server
 }
@@ -68,11 +70,12 @@ type TabletOption func(tablet *topo.Tablet)
 func TabletKeyspaceShard(t *testing.T, keyspace, shard string) TabletOption {
 	return func(tablet *topo.Tablet) {
 		tablet.Keyspace = keyspace
-		var err error
-		tablet.Shard, tablet.KeyRange, err = topo.ValidateShardName(shard)
+		shard, ks, err := topo.ValidateShardName(shard)
 		if err != nil {
 			t.Fatalf("cannot ValidateShardName value %v", shard)
 		}
+		tablet.Shard = shard
+		tablet.KeyRange = key.ProtoToKeyRange(ks)
 	}
 }
 
@@ -107,7 +110,7 @@ func NewFakeTablet(t *testing.T, wr *wrangler.Wrangler, cell string, uid uint32,
 		Portmap: map[string]int{
 			"vt":    8100 + int(uid),
 			"mysql": 3300 + int(uid),
-			"vts":   8200 + int(uid),
+			"grpc":  8200 + int(uid),
 		},
 		IPAddr:   fmt.Sprintf("%v.0.0.1", 100+uid),
 		Keyspace: "test_keyspace",
@@ -132,7 +135,7 @@ func NewFakeTablet(t *testing.T, wr *wrangler.Wrangler, cell string, uid uint32,
 	return &FakeTablet{
 		Tablet:          tablet,
 		FakeMysqlDaemon: fakeMysqlDaemon,
-		StartHttpServer: startHTTPServer,
+		StartHTTPServer: startHTTPServer,
 	}
 }
 
@@ -153,7 +156,7 @@ func (ft *FakeTablet) StartActionLoop(t *testing.T, wr *wrangler.Wrangler) {
 
 	// if needed, listen on a random port for HTTP
 	vtPort := ft.Tablet.Portmap["vt"]
-	if ft.StartHttpServer {
+	if ft.StartHTTPServer {
 		ft.HTTPListener, err = net.Listen("tcp", ":0")
 		if err != nil {
 			t.Fatalf("Cannot listen on http port: %v", err)
@@ -175,6 +178,25 @@ func (ft *FakeTablet) StartActionLoop(t *testing.T, wr *wrangler.Wrangler) {
 	ft.RPCServer = grpc.NewServer()
 	grpctmserver.RegisterForTest(ft.RPCServer, ft.Agent)
 	go ft.RPCServer.Serve(ft.Listener)
+
+	// and wait for it to serve, so we don't start using it before it's
+	// ready.
+	timeout := 5 * time.Second
+	step := 10 * time.Millisecond
+	c := tmclient.NewTabletManagerClient()
+	for timeout >= 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		err := c.Ping(ctx, ft.Agent.Tablet())
+		cancel()
+		if err == nil {
+			break
+		}
+		time.Sleep(step)
+		timeout -= step
+	}
+	if timeout < 0 {
+		panic("StartActionLoop failed.")
+	}
 }
 
 // StopActionLoop will stop the Action Loop for the given FakeTablet
@@ -182,7 +204,7 @@ func (ft *FakeTablet) StopActionLoop(t *testing.T) {
 	if ft.Agent == nil {
 		t.Fatalf("Agent for %v is not running", ft.Tablet.Alias)
 	}
-	if ft.StartHttpServer {
+	if ft.StartHTTPServer {
 		ft.HTTPListener.Close()
 	}
 	ft.Listener.Close()

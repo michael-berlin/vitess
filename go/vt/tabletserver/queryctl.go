@@ -48,7 +48,10 @@ func init() {
 	flag.Float64Var(&qsConfig.IdleTimeout, "queryserver-config-idle-timeout", DefaultQsConfig.IdleTimeout, "query server idle timeout (in seconds), vttablet manages various mysql connection pools. This config means if a connection has not been used in given idle timeout, this connection will be removed from pool. This effectively manages number of connection objects and optimize the pool performance.")
 	flag.Float64Var(&qsConfig.SpotCheckRatio, "queryserver-config-spot-check-ratio", DefaultQsConfig.SpotCheckRatio, "query server rowcache spot check frequency (in [0, 1]), if rowcache is enabled, this value determines how often a row retrieved from the rowcache is spot-checked against MySQL.")
 	flag.BoolVar(&qsConfig.StrictMode, "queryserver-config-strict-mode", DefaultQsConfig.StrictMode, "allow only predictable DMLs and enforces MySQL's STRICT_TRANS_TABLES")
+	// tableacl related configurations.
 	flag.BoolVar(&qsConfig.StrictTableAcl, "queryserver-config-strict-table-acl", DefaultQsConfig.StrictTableAcl, "only allow queries that pass table acl checks")
+	flag.BoolVar(&qsConfig.EnableTableAclDryRun, "queryserver-config-enable-table-acl-dry-run", DefaultQsConfig.EnableTableAclDryRun, "If this flag is enabled, tabletserver will emit monitoring metrics and let the request pass regardless of table acl check results")
+	flag.StringVar(&qsConfig.TableAclExemptACL, "queryserver-config-acl-exempt-acl", DefaultQsConfig.TableAclExemptACL, "an acl that exempt from table acl checking (this acl is free to access any vitess tables).")
 	flag.BoolVar(&qsConfig.TerseErrors, "queryserver-config-terse-errors", DefaultQsConfig.TerseErrors, "prevent bind vars from escaping in returned errors")
 	flag.BoolVar(&qsConfig.EnablePublishStats, "queryserver-config-enable-publish-stats", DefaultQsConfig.EnablePublishStats, "set this flag to true makes queryservice publish monitoring stats")
 	flag.StringVar(&qsConfig.RowCache.Binary, "rowcache-bin", DefaultQsConfig.RowCache.Binary, "rowcache binary file, vttablet launches a memcached if rowcache is enabled. This config specifies the location of the memcache binary.")
@@ -101,28 +104,30 @@ func (c *RowCacheConfig) GetSubprocessFlags(socket string) []string {
 
 // Config contains all the configuration for query service
 type Config struct {
-	PoolSize           int
-	StreamPoolSize     int
-	TransactionCap     int
-	TransactionTimeout float64
-	MaxResultSize      int
-	MaxDMLRows         int
-	StreamBufferSize   int
-	QueryCacheSize     int
-	SchemaReloadTime   float64
-	QueryTimeout       float64
-	TxPoolTimeout      float64
-	IdleTimeout        float64
-	RowCache           RowCacheConfig
-	SpotCheckRatio     float64
-	StrictMode         bool
-	StrictTableAcl     bool
-	TerseErrors        bool
-	EnablePublishStats bool
-	EnableAutoCommit   bool
-	StatsPrefix        string
-	DebugURLPrefix     string
-	PoolNamePrefix     string
+	PoolSize             int
+	StreamPoolSize       int
+	TransactionCap       int
+	TransactionTimeout   float64
+	MaxResultSize        int
+	MaxDMLRows           int
+	StreamBufferSize     int
+	QueryCacheSize       int
+	SchemaReloadTime     float64
+	QueryTimeout         float64
+	TxPoolTimeout        float64
+	IdleTimeout          float64
+	RowCache             RowCacheConfig
+	SpotCheckRatio       float64
+	StrictMode           bool
+	StrictTableAcl       bool
+	TerseErrors          bool
+	EnablePublishStats   bool
+	EnableAutoCommit     bool
+	EnableTableAclDryRun bool
+	StatsPrefix          string
+	DebugURLPrefix       string
+	PoolNamePrefix       string
+	TableAclExemptACL    string
 }
 
 // DefaultQSConfig is the default value for the query service config.
@@ -134,28 +139,30 @@ type Config struct {
 // great (the overhead makes the final packets on the wire about twice
 // bigger than this).
 var DefaultQsConfig = Config{
-	PoolSize:           16,
-	StreamPoolSize:     750,
-	TransactionCap:     20,
-	TransactionTimeout: 30,
-	MaxResultSize:      10000,
-	MaxDMLRows:         500,
-	QueryCacheSize:     5000,
-	SchemaReloadTime:   30 * 60,
-	QueryTimeout:       0,
-	TxPoolTimeout:      1,
-	IdleTimeout:        30 * 60,
-	StreamBufferSize:   32 * 1024,
-	RowCache:           RowCacheConfig{Memory: -1, Connections: -1, Threads: -1},
-	SpotCheckRatio:     0,
-	StrictMode:         true,
-	StrictTableAcl:     false,
-	TerseErrors:        false,
-	EnablePublishStats: true,
-	EnableAutoCommit:   false,
-	StatsPrefix:        "",
-	DebugURLPrefix:     "/debug",
-	PoolNamePrefix:     "",
+	PoolSize:             16,
+	StreamPoolSize:       750,
+	TransactionCap:       20,
+	TransactionTimeout:   30,
+	MaxResultSize:        10000,
+	MaxDMLRows:           500,
+	QueryCacheSize:       5000,
+	SchemaReloadTime:     30 * 60,
+	QueryTimeout:         0,
+	TxPoolTimeout:        1,
+	IdleTimeout:          30 * 60,
+	StreamBufferSize:     32 * 1024,
+	RowCache:             RowCacheConfig{Memory: -1, Connections: -1, Threads: -1},
+	SpotCheckRatio:       0,
+	StrictMode:           true,
+	StrictTableAcl:       false,
+	TerseErrors:          false,
+	EnablePublishStats:   true,
+	EnableAutoCommit:     false,
+	EnableTableAclDryRun: false,
+	StatsPrefix:          "",
+	DebugURLPrefix:       "/debug",
+	PoolNamePrefix:       "",
+	TableAclExemptACL:    "",
 }
 
 var qsConfig Config
@@ -379,6 +386,7 @@ func (rqsc *realQueryServiceControl) BroadcastHealth(terTimestamp int64, stats *
 func (rqsc *realQueryServiceControl) IsHealthy() error {
 	return rqsc.sqlQueryRPCService.Execute(
 		context.Background(),
+		nil,
 		&proto.Query{
 			Sql:       "select 1 from dual",
 			SessionId: rqsc.sqlQueryRPCService.sessionID,

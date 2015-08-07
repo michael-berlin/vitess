@@ -71,6 +71,11 @@ class TestTabletManager(unittest.TestCase):
       t.reset_replication()
       t.clean_dbs()
 
+  def _check_srv_shard(self):
+    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
+                                     'test_keyspace/0'])
+    self.assertEqual(srvShard['master_cell'], 'test_nj')
+
   # run twice to check behavior with existing znode data
   def test_sanity(self):
     self._test_sanity()
@@ -83,9 +88,7 @@ class TestTabletManager(unittest.TestCase):
     tablet_62344.init_tablet('master', 'test_keyspace', '0', parent=False)
     utils.run_vtctl(['RebuildKeyspaceGraph', '-rebuild_srv_shards', 'test_keyspace'])
     utils.validate_topology()
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/0'])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_srv_shard()
 
     # if these statements don't run before the tablet it will wedge
     # waiting for the db to become accessible. this is more a bug than
@@ -96,11 +99,9 @@ class TestTabletManager(unittest.TestCase):
     tablet_62344.start_vttablet()
 
     # make sure the query service is started right away
-    conn = tablet_62344.conn()
-    results, rowcount, lastrowid, fields = conn._execute('select * from vt_select_test', {})
-    self.assertEqual(len(results), 4, "expected 4 rows in vt_select_test: %s %s" %
-                     (str(results), str(fields)))
-    conn.close()
+    qr = tablet_62344.execute('select * from vt_select_test')
+    self.assertEqual(len(qr['Rows']), 4,
+                     "expected 4 rows in vt_select_test: %s" % str(qr))
 
     # make sure direct dba queries work
     query_result = utils.run_vtctl_json(['ExecuteFetchAsDba', '-want_fields', tablet_62344.tablet_alias, 'select * from vt_test_keyspace.vt_select_test'])
@@ -127,9 +128,7 @@ class TestTabletManager(unittest.TestCase):
     # break because we only have a single master, no slaves
     utils.run_vtctl(['ValidateShard', '-ping-tablets=false',
                      'test_keyspace/0'])
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/0'])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_srv_shard()
 
     tablet_62344.kill_vttablet()
 
@@ -144,15 +143,11 @@ class TestTabletManager(unittest.TestCase):
     tablet_62044.init_tablet('replica', 'test_keyspace', '0')
     utils.run_vtctl(['RebuildShardGraph', 'test_keyspace/*'])
     utils.validate_topology()
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/0'])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_srv_shard()
 
     tablet_62044.scrap(force=True)
     utils.validate_topology()
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/0'])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_srv_shard()
 
 
   _create_vt_select_test = '''create table vt_select_test (
@@ -173,9 +168,7 @@ class TestTabletManager(unittest.TestCase):
     tablet_62344.init_tablet('master', 'test_keyspace', '0')
     utils.run_vtctl(['RebuildShardGraph', 'test_keyspace/0'])
     utils.validate_topology()
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/0'])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_srv_shard()
     tablet_62344.create_db('vt_test_keyspace')
     tablet_62344.start_vttablet()
 
@@ -231,9 +224,7 @@ class TestTabletManager(unittest.TestCase):
     tablet_62344.init_tablet('master', 'test_keyspace', '0')
     utils.run_vtctl(['RebuildShardGraph', 'test_keyspace/0'])
     utils.validate_topology()
-    srvShard = utils.run_vtctl_json(['GetSrvShard', 'test_nj',
-                                     'test_keyspace/0'])
-    self.assertEqual(srvShard['MasterCell'], 'test_nj')
+    self._check_srv_shard()
 
     tablet_62344.populate('vt_test_keyspace', self._create_vt_select_test,
                           self._populate_vt_select_test)
@@ -362,7 +353,9 @@ class TestTabletManager(unittest.TestCase):
     # make sure the replica is in the replication graph
     before_scrap = utils.run_vtctl_json(['GetShardReplication', 'test_nj',
                                          'test_keyspace/0'])
-    self.assertEqual(2, len(before_scrap['ReplicationLinks']), 'wrong replication links before: %s' % str(before_scrap))
+    self.assertEqual(2, len(before_scrap['nodes']),
+                     'wrong shard replication nodes before: %s' %
+                     str(before_scrap))
 
     # scrap and re-init
     utils.run_vtctl(['ScrapTablet', '-force', tablet_62044.tablet_alias])
@@ -370,7 +363,9 @@ class TestTabletManager(unittest.TestCase):
 
     after_scrap = utils.run_vtctl_json(['GetShardReplication', 'test_nj',
                                         'test_keyspace/0'])
-    self.assertEqual(2, len(after_scrap['ReplicationLinks']), 'wrong replication links after: %s' % str(after_scrap))
+    self.assertEqual(2, len(after_scrap['nodes']),
+                     'wrong shard replication nodes after: %s' %
+                     str(after_scrap))
 
     # manually add a bogus entry to the replication graph, and check
     # it is removed by ShardReplicationFix
@@ -378,14 +373,16 @@ class TestTabletManager(unittest.TestCase):
                      'test_nj-0000066666'], auto_log=True)
     with_bogus = utils.run_vtctl_json(['GetShardReplication', 'test_nj',
                                         'test_keyspace/0'])
-    self.assertEqual(3, len(with_bogus['ReplicationLinks']),
-                     'wrong replication links with bogus: %s' % str(with_bogus))
+    self.assertEqual(3, len(with_bogus['nodes']),
+                     'wrong shard replication nodes with bogus: %s' %
+                     str(with_bogus))
     utils.run_vtctl(['ShardReplicationFix', 'test_nj', 'test_keyspace/0'],
                     auto_log=True)
     after_fix = utils.run_vtctl_json(['GetShardReplication', 'test_nj',
                                         'test_keyspace/0'])
-    self.assertEqual(2, len(after_scrap['ReplicationLinks']),
-                     'wrong replication links after fix: %s' % str(after_fix))
+    self.assertEqual(2, len(after_scrap['nodes']),
+                     'wrong shard replication nodes after fix: %s' %
+                     str(after_fix))
 
   def check_healthz(self, tablet, expected):
     if expected:

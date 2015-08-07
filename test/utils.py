@@ -210,9 +210,10 @@ def run(cmd, trap_output=False, raise_on_error=True, **kargs):
   if proc.returncode:
     if raise_on_error:
       pause("cmd fail: %s, pausing..." % (args))
-      raise TestError('cmd fail:', args, stdout, stderr)
+      raise TestError('cmd fail:', args, proc.returncode, stdout, stderr)
     else:
-      logging.debug('cmd fail: %s %s %s', str(args), stdout, stderr)
+      logging.debug('cmd fail: %s %d %s %s',
+                    str(args), proc.returncode, stdout, stderr)
   return stdout, stderr
 
 # run sub-process, expects failure
@@ -414,21 +415,17 @@ class VtGate(object):
   """VtGate object represents a vtgate process.
   """
 
-  def __init__(self, port=None, cert=None, key=None):
+  def __init__(self, port=None):
     """Creates the Vtgate instance and reserve the ports if necessary.
     """
     self.port = port or environment.reserve_ports(1)
     if protocols_flavor().vtgate_protocol() == 'grpc':
       self.grpc_port = environment.reserve_ports(1)
     self.secure_port = None
-    if cert:
-      self.secure_port = environment.reserve_ports(1)
-      self.cert = cert
-      self.key = key
     self.proc = None
 
   def start(self, cell='test_nj', retry_delay=1, retry_count=2,
-            topo_impl=None, tablet_bson_encrypted=False, cache_ttl='1s',
+            topo_impl=None, cache_ttl='1s',
             auth=False, timeout_total="4s", timeout_per_conn="2s",
             extra_args=None):
     """Starts the process for thie vtgate instance. If no other instance has
@@ -454,17 +451,10 @@ class VtGate(object):
       args.extend(['-topo_implementation', topo_impl])
     else:
       args.extend(environment.topo_server().flags())
-    if tablet_bson_encrypted:
-      args.append('-tablet-bson-encrypted')
     if auth:
       args.extend(['-auth-credentials',
                    os.path.join(environment.vttop, 'test', 'test_data',
                                 'authcredentials_test.json')])
-    if self.secure_port:
-      args.extend(['-secure-port', '%s' % self.secure_port,
-                   '-cert', self.cert,
-                   '-key', self.key])
-
     if extra_args:
       args.extend(extra_args)
 
@@ -809,12 +799,12 @@ def check_shard_query_service(testcase, shard_name, tablet_type, expected_state)
   """Makes assertions about the state of DisableQueryService in the shard record's TabletControlMap."""
   # We assume that query service should be enabled unless DisableQueryService is explicitly True
   query_service_enabled = True
-  tablet_control_map = run_vtctl_json(['GetShard', shard_name]).get('TabletControlMap')
-  if tablet_control_map:
-    disable_query_service = tablet_control_map.get(tablet_type, {}).get('DisableQueryService')
-
-    if disable_query_service:
-      query_service_enabled = False
+  tablet_controls = run_vtctl_json(['GetShard', shard_name]).get('tablet_controls')
+  if tablet_controls:
+    for tc in tablet_controls:
+      if tc['tablet_type'] == tablet_type:
+        if tc.get('disable_query_service', False):
+          query_service_enabled = False
 
   testcase.assertEqual(
     query_service_enabled,
@@ -823,8 +813,8 @@ def check_shard_query_service(testcase, shard_name, tablet_type, expected_state)
   )
 
 def check_shard_query_services(testcase, shard_names, tablet_type, expected_state):
-  for shard_names in shard_names:
-    check_shard_query_service(testcase, shard_names, tablet_type, expected_state)
+  for shard_name in shard_names:
+    check_shard_query_service(testcase, shard_name, tablet_type, expected_state)
 
 def check_tablet_query_service(testcase, tablet, serving, tablet_control_disabled):
   """check_tablet_query_service will check that the query service is enabled
@@ -914,6 +904,7 @@ class Vtctld(object):
   def start(self):
     args = environment.binary_args('vtctld') + [
             '-debug',
+            '-web_dir', environment.vttop + '/web/vtctld',
             '--templates', environment.vttop + '/go/cmd/vtctld/templates',
             '--log_dir', environment.vtlogroot,
             '--port', str(self.port),

@@ -12,14 +12,6 @@ MAKEFLAGS = -s
 
 all: build test
 
-# Values to be burned into the binary at build-time.
-LDFLAGS = "\
-	-X github.com/youtube/vitess/go/vt/servenv.buildHost   '$$(hostname)'\
-	-X github.com/youtube/vitess/go/vt/servenv.buildUser   '$$(whoami)'\
-	-X github.com/youtube/vitess/go/vt/servenv.buildGitRev '$$(git rev-parse HEAD)'\
-	-X github.com/youtube/vitess/go/vt/servenv.buildTime   '$$(LC_ALL=C date)'\
-"
-
 # Set a custom value for -p, the number of packages to be built/tested in parallel.
 # This is currently only used by our Travis CI test configuration.
 # (Also keep in mind that this value is independent of GOMAXPROCS.)
@@ -35,7 +27,7 @@ ifdef VT_MYSQL_ROOT
 endif
 
 build:
-	godep go install $(VT_GO_PARALLEL) -ldflags ${LDFLAGS} ./go/...
+	godep go install $(VT_GO_PARALLEL) -ldflags "$(tools/build_version_flags.sh)" ./go/...
 
 # Set VT_TEST_FLAGS to pass flags to python tests.
 # For example, verbose output: export VT_TEST_FLAGS=-v
@@ -44,7 +36,13 @@ site_test: unit_test site_integration_test
 
 clean:
 	go clean -i ./go/...
-	rm -rf java/vtocc-client/target java/vtocc-jdbc-driver/target third_party/acolyte
+	rm -rf third_party/acolyte
+
+# This will remove object files for all Go projects in the same GOPATH.
+# This is necessary, for example, to make sure dependencies are rebuilt
+# when switching between different versions of Go.
+clean_pkg:
+	rm -rf ../../../../pkg Godeps/_workspace/pkg
 
 unit_test:
 	godep go test $(VT_GO_PARALLEL) ./go/...
@@ -101,12 +99,14 @@ site_integration_test_files = \
 # - large: over 1 min
 small_integration_test_files = \
 	tablet_test.py \
+	sql_builder_test.py \
 	vertical_split.py \
 	vertical_split_vtgate.py \
 	schema.py \
 	keyspace_test.py \
 	keyrange_test.py \
 	mysqlctl.py \
+	python_client_test.py \
 	sharded.py \
 	secure.py \
 	binlog.py \
@@ -117,13 +117,15 @@ small_integration_test_files = \
 	initial_sharding.py \
 	zkocc_test.py
 
+# TODO(mberlin): Remove -v option to worker.py when we found out what causes 10 minute Travis timeouts.
 medium_integration_test_files = \
 	tabletmanager.py \
 	reparent.py \
 	vtdb_test.py \
+	client_test.py \
 	vtgate_utils_test.py \
 	rowcache_invalidator.py \
-	worker.py \
+	"worker.py -v" \
 	automation_horizontal_resharding.py
 
 large_integration_test_files = \
@@ -151,12 +153,19 @@ SHELL = /bin/bash
 
 # function to execute a list of integration test files
 # exits on first failure
+# TODO(mberlin): Remove special handling for worker.py when we found out what causes 10 minute Travis timeouts.
 define run_integration_tests
 	cd test ; \
 	for t in $1 ; do \
 		echo $$(date): Running test/$$t... ; \
-		output=$$(time ./$$t $$VT_TEST_FLAGS 2>&1) ; \
-		if [[ $$? != 0 ]]; then \
+		if [[ $$t == *worker.py* ]]; then \
+			time ./$$t $$VT_TEST_FLAGS 2>&1 ; \
+			rc=$$? ; \
+		else \
+			output=$$(time ./$$t $$VT_TEST_FLAGS 2>&1) ; \
+			rc=$$? ; \
+		fi ; \
+		if [[ $$rc != 0 ]]; then \
 			echo "$$output" >&2 ; \
 			exit 1 ; \
 		fi ; \
@@ -185,12 +194,8 @@ integration_test: small_integration_test medium_integration_test large_integrati
 site_integration_test:
 	$(call run_integration_tests, $(site_integration_test_files))
 
-# this rule only works if bootstrap.sh was successfully ran in ./java
-java_test:
-	cd java && mvn verify
-
 java_vtgate_client_test:
-	mvn -f java/vtgate-client/pom.xml clean verify
+	mvn -f java/pom.xml clean verify
 
 v3_test:
 	cd test && ./vtgatev3_test.py

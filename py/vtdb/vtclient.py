@@ -19,9 +19,9 @@ MAX_RETRY_ATTEMPTS = 2
 
 
 def get_vt_connection_params_list(topo_client, keyspace, shard, db_type,
-                                  timeout, encrypted, user, password):
+                                  timeout, user, password):
   return topo_utils.get_db_params_for_tablet_conn(topo_client, keyspace, shard,
-                                                  db_type, timeout, encrypted,
+                                                  db_type, timeout,
                                                   user, password)
 
 
@@ -56,7 +56,7 @@ class VtOCCConnection(object):
   cursorclass = cursor.TabletCursor
 
   def __init__(self, topo_client, keyspace, shard, db_type, timeout, user=None,
-               password=None, encrypted=False, keyfile=None, certfile=None,
+               password=None, keyfile=None, certfile=None,
                vtgate_protocol='v0', vtgate_addrs=None):
     self.topo_client = topo_client
     self.keyspace = keyspace
@@ -65,7 +65,6 @@ class VtOCCConnection(object):
     self.timeout = timeout
     self.user = user
     self.password = password
-    self.encrypted = encrypted
     self.keyfile = keyfile
     self.certfile = certfile
     self.vtgate_protocol = vtgate_protocol
@@ -100,7 +99,6 @@ class VtOCCConnection(object):
                                                    self.shard,
                                                    self.db_type,
                                                    self.timeout,
-                                                   self.encrypted,
                                                    self.user,
                                                    self.password)
     if not db_params_list:
@@ -158,7 +156,7 @@ class VtOCCConnection(object):
     return result
 
   @reconnect
-  def _execute_batch(self, sql_list, bind_variables_list):
+  def _execute_batch(self, sql_list, bind_variables_list, as_transaction):
     sane_sql_list = []
     sane_bind_vars_list = []
     for sql, bind_variables in zip(sql_list, bind_variables_list):
@@ -167,7 +165,7 @@ class VtOCCConnection(object):
       sane_bind_vars_list.append(sane_bind_vars)
 
     try:
-      result = self.conn._execute_batch(sane_sql_list, sane_bind_vars_list)
+      result = self.conn._execute_batch(sane_sql_list, sane_bind_vars_list, as_transaction)
     except dbexceptions.IntegrityError as e:
       vtdb_logger.get_logger().integrity_error(e)
       raise

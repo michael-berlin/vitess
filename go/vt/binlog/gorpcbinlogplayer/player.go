@@ -16,7 +16,8 @@ import (
 	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
 	"github.com/youtube/vitess/go/vt/binlog/proto"
 	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/topo"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // client implements a Client over go rpc
@@ -24,10 +25,10 @@ type client struct {
 	*rpcplus.Client
 }
 
-func (client *client) Dial(endPoint topo.EndPoint, connTimeout time.Duration) error {
-	addr := netutil.JoinHostPort(endPoint.Host, endPoint.NamedPortMap["vt"])
+func (client *client) Dial(endPoint *pb.EndPoint, connTimeout time.Duration) error {
+	addr := netutil.JoinHostPort(endPoint.Host, endPoint.PortMap["vt"])
 	var err error
-	client.Client, err = bsonrpc.DialHTTP("tcp", addr, connTimeout, nil)
+	client.Client, err = bsonrpc.DialHTTP("tcp", addr, connTimeout)
 	return err
 }
 
@@ -65,11 +66,11 @@ func (client *client) ServeUpdateStream(ctx context.Context, position string) (c
 	}, nil
 }
 
-func (client *client) StreamKeyRange(ctx context.Context, position string, keyspaceIdType key.KeyspaceIdType, keyRange key.KeyRange, charset *mproto.Charset) (chan *proto.BinlogTransaction, binlogplayer.ErrFunc, error) {
+func (client *client) StreamKeyRange(ctx context.Context, position string, keyspaceIdType key.KeyspaceIdType, keyRange *pb.KeyRange, charset *mproto.Charset) (chan *proto.BinlogTransaction, binlogplayer.ErrFunc, error) {
 	req := &proto.KeyRangeRequest{
 		Position:       position,
 		KeyspaceIdType: keyspaceIdType,
-		KeyRange:       keyRange,
+		KeyRange:       key.ProtoToKeyRange(keyRange),
 		Charset:        charset,
 	}
 	result := make(chan *proto.BinlogTransaction, 10)

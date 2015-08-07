@@ -95,10 +95,12 @@ class VTGateConnection(object):
   _stream_result = None
   _stream_result_index = None
 
-  def __init__(self, addr, timeout, user=None, password=None, encrypted=False, keyfile=None, certfile=None):
+  def __init__(self, addr, timeout, user=None, password=None,
+               keyfile=None, certfile=None):
     self.addr = addr
     self.timeout = timeout
-    self.client = bsonrpc.BsonRpcClient(addr, timeout, user, password, encrypted=encrypted, keyfile=keyfile, certfile=certfile)
+    self.client = bsonrpc.BsonRpcClient(addr, timeout, user, password,
+                                        keyfile=keyfile, certfile=certfile)
     self.logger_object = vtdb_logger.get_logger()
 
   def __str__(self):
@@ -197,7 +199,7 @@ class VTGateConnection(object):
     return results, rowcount, lastrowid, fields
 
 
-  def _execute_batch(self, sql_list, bind_variables_list, tablet_type, not_in_transaction=False):
+  def _execute_batch(self, sql_list, bind_variables_list, tablet_type, as_transaction):
     query_list = []
     for sql, bind_vars in zip(sql_list, bind_variables_list):
       query = {}
@@ -211,7 +213,7 @@ class VTGateConnection(object):
       req = {
           'Queries': query_list,
           'TabletType': tablet_type,
-          'NotInTransaction': not_in_transaction,
+          'AsTransaction': as_transaction,
       }
       self._add_session(req)
       response = self.client.call('VTGate.ExecuteBatch', req)

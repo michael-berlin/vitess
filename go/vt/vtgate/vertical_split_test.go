@@ -32,10 +32,7 @@ func TestBatchExecuteKeyspaceAlias(t *testing.T) {
 			Keyspace:      KsTestUnshardedServedFrom,
 			Shards:        shards,
 		}}
-		scatterRequest, err := boundShardQueriesToScatterBatchRequest(queries)
-		if err != nil {
-			t.Error(err)
-		}
+		scatterRequest := boundShardQueriesToScatterBatchRequest(queries)
 		qrs, err := stc.ExecuteBatch(context.Background(), scatterRequest, topo.TYPE_RDONLY, false, nil)
 		if err != nil {
 			return nil, err
@@ -72,14 +69,14 @@ func TestInTransactionKeyspaceAlias(t *testing.T) {
 		}},
 	})
 	_, err := stc.Execute(context.Background(), "query", nil, KsTestUnshardedServedFrom, []string{"0"}, topo.TYPE_MASTER, session, false)
-	want := "shard, host: TestUnshardedServedFrom.0.master, {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, retry: err"
+	want := "shard, host: TestUnshardedServedFrom.0.master, host:\"0\" port_map:<key:\"vt\" value:1 > , retry: err"
 	if err == nil || err.Error() != want {
 		t.Errorf("want '%v', got '%v'", want, err)
 	}
 	// Ensure that we tried once, no retry here
 	// since we are in a transaction.
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 }
 
@@ -93,8 +90,8 @@ func testVerticalSplitGeneric(t *testing.T, isStreaming bool, f func(shards []st
 		t.Errorf("want nil, got %v", err)
 	}
 	// Ensure that we tried 2 times, 1 for retry and 1 for redirect.
-	if sbc.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
 
 	// Fatal Error, for keyspace that is redirected should succeed.
@@ -103,21 +100,21 @@ func testVerticalSplitGeneric(t *testing.T, isStreaming bool, f func(shards []st
 	s.MapTestConn("0", sbc)
 	_, err = f([]string{"0"})
 	if isStreaming {
-		want := "shard, host: TestUnshardedServedFrom.0.rdonly, {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, fatal: err"
+		want := "shard, host: TestUnshardedServedFrom.0.rdonly, host:\"0\" port_map:<key:\"vt\" value:1 > , fatal: err"
 		if err == nil || err.Error() != want {
 			t.Errorf("want '%v', got '%v'", want, err)
 		}
 		// Ensure that we tried only once.
-		if sbc.ExecCount != 1 {
-			t.Errorf("want 1, got %v", sbc.ExecCount)
+		if execCount := sbc.ExecCount.Get(); execCount != 1 {
+			t.Errorf("want 1, got %v", execCount)
 		}
 	} else {
 		if err != nil {
 			t.Errorf("want nil, got %v", err)
 		}
 		// Ensure that we tried 2 times, 1 for retry and 1 for redirect.
-		if sbc.ExecCount != 2 {
-			t.Errorf("want 2, got %v", sbc.ExecCount)
+		if execCount := sbc.ExecCount.Get(); execCount != 2 {
+			t.Errorf("want 2, got %v", execCount)
 		}
 	}
 
@@ -126,12 +123,12 @@ func testVerticalSplitGeneric(t *testing.T, isStreaming bool, f func(shards []st
 	sbc = &sandboxConn{mustFailServer: 3}
 	s.MapTestConn("0", sbc)
 	_, err = f([]string{"0"})
-	want := "shard, host: TestUnshardedServedFrom.0.rdonly, {Uid:0 Host:0 NamedPortMap:map[vt:1] Health:map[]}, error: err"
+	want := "shard, host: TestUnshardedServedFrom.0.rdonly, host:\"0\" port_map:<key:\"vt\" value:1 > , error: err"
 	if err == nil || err.Error() != want {
 		t.Errorf("want '%v', got '%v'", want, err)
 	}
 	// Ensure that we tried once, no retry here.
-	if sbc.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc.ExecCount)
+	if execCount := sbc.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 }

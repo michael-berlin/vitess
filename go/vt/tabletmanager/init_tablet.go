@@ -35,7 +35,7 @@ func init() {
 }
 
 // InitTablet initializes the tablet record if necessary.
-func (agent *ActionAgent) InitTablet(port, securePort, gRPCPort int) error {
+func (agent *ActionAgent) InitTablet(port, gRPCPort int) error {
 	// only enabled if one of init_tablet_type (when healthcheck
 	// is disabled) or init_keyspace (when healthcheck is enabled)
 	// is passed in, then check other parameters
@@ -97,7 +97,7 @@ func (agent *ActionAgent) InitTablet(port, securePort, gRPCPort int) error {
 		if err != nil {
 			return fmt.Errorf("InitTablet cannot GetOrCreateShard shard: %v", err)
 		}
-		if si.MasterAlias == agent.TabletAlias {
+		if si.MasterAlias != nil && *si.MasterAlias == *topo.TabletAliasToProto(agent.TabletAlias) {
 			// we are the current master for this shard (probably
 			// means the master tablet process was just restarted),
 			// so InitTablet as master.
@@ -160,9 +160,6 @@ func (agent *ActionAgent) InitTablet(port, securePort, gRPCPort int) error {
 	}
 	if port != 0 {
 		tablet.Portmap["vt"] = port
-	}
-	if securePort != 0 {
-		tablet.Portmap["vts"] = securePort
 	}
 	if gRPCPort != 0 {
 		tablet.Portmap["grpc"] = gRPCPort

@@ -7,6 +7,8 @@ import (
 
 	"github.com/youtube/vitess/go/vt/topo"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 var errNotImplemented = errors.New("Not implemented")
@@ -25,7 +27,7 @@ func (ft FakeTopo) GetSrvKeyspace(ctx context.Context, cell, keyspace string) (*
 }
 
 // GetEndPoints implements topo.Server.
-func (ft FakeTopo) GetEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType) (*topo.EndPoints, int64, error) {
+func (ft FakeTopo) GetEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType) (*pb.EndPoints, int64, error) {
 	return nil, -1, errNotImplemented
 }
 
@@ -38,7 +40,7 @@ func (ft FakeTopo) GetKnownCells(ctx context.Context) ([]string, error) {
 }
 
 // CreateKeyspace implements topo.Server.
-func (ft FakeTopo) CreateKeyspace(ctx context.Context, keyspace string, value *topo.Keyspace) error {
+func (ft FakeTopo) CreateKeyspace(ctx context.Context, keyspace string, value *pb.Keyspace) error {
 	return errNotImplemented
 }
 
@@ -68,7 +70,7 @@ func (ft FakeTopo) DeleteKeyspaceShards(ctx context.Context, keyspace string) er
 }
 
 // CreateShard implements topo.Server.
-func (ft FakeTopo) CreateShard(ctx context.Context, keyspace, shard string, value *topo.Shard) error {
+func (ft FakeTopo) CreateShard(ctx context.Context, keyspace, shard string, value *pb.Shard) error {
 	return errNotImplemented
 }
 
@@ -128,7 +130,7 @@ func (ft FakeTopo) GetTabletsByCell(ctx context.Context, cell string) ([]topo.Ta
 }
 
 // UpdateShardReplicationFields implements topo.Server.
-func (ft FakeTopo) UpdateShardReplicationFields(ctx context.Context, cell, keyspace, shard string, update func(*topo.ShardReplication) error) error {
+func (ft FakeTopo) UpdateShardReplicationFields(ctx context.Context, cell, keyspace, shard string, update func(*pb.ShardReplication) error) error {
 	return errNotImplemented
 }
 
@@ -163,12 +165,12 @@ func (ft FakeTopo) GetSrvTabletTypesPerShard(ctx context.Context, cell, keyspace
 }
 
 // CreateEndPoints implements topo.Server.
-func (ft FakeTopo) CreateEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType, addrs *topo.EndPoints) error {
+func (ft FakeTopo) CreateEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType, addrs *pb.EndPoints) error {
 	return errNotImplemented
 }
 
 // UpdateEndPoints implements topo.Server.
-func (ft FakeTopo) UpdateEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType, addrs *topo.EndPoints, existingVersion int64) error {
+func (ft FakeTopo) UpdateEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType, addrs *pb.EndPoints, existingVersion int64) error {
 	return errNotImplemented
 }
 
@@ -178,17 +180,17 @@ func (ft FakeTopo) DeleteEndPoints(ctx context.Context, cell, keyspace, shard st
 }
 
 // WatchEndPoints implements topo.Server.
-func (ft FakeTopo) WatchEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType) (<-chan *topo.EndPoints, chan<- struct{}, error) {
+func (ft FakeTopo) WatchEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType) (<-chan *pb.EndPoints, chan<- struct{}, error) {
 	return nil, nil, errNotImplemented
 }
 
 // UpdateSrvShard implements topo.Server.
-func (ft FakeTopo) UpdateSrvShard(ctx context.Context, cell, keyspace, shard string, srvShard *topo.SrvShard) error {
+func (ft FakeTopo) UpdateSrvShard(ctx context.Context, cell, keyspace, shard string, srvShard *pb.SrvShard) error {
 	return errNotImplemented
 }
 
 // GetSrvShard implements topo.Server.
-func (ft FakeTopo) GetSrvShard(ctx context.Context, cell, keyspace, shard string) (*topo.SrvShard, error) {
+func (ft FakeTopo) GetSrvShard(ctx context.Context, cell, keyspace, shard string) (*pb.SrvShard, error) {
 	return nil, errNotImplemented
 }
 

@@ -98,8 +98,6 @@ func TestResolverExecuteEntityIds(t *testing.T) {
 }
 
 func TestResolverExecuteBatchKeyspaceIds(t *testing.T) {
-	//TODO(sougou): Fix test
-	t.Skip()
 	testResolverGeneric(t, "TestResolverExecuteBatchKeyspaceIds", func() (*mproto.QueryResult, error) {
 		kid10, err := key.HexKeyspaceId("10").Unhex()
 		if err != nil {
@@ -117,7 +115,7 @@ func TestResolverExecuteBatchKeyspaceIds(t *testing.T) {
 				KeyspaceIds:   []key.KeyspaceId{kid10, kid25},
 			}},
 			TabletType:    topo.TYPE_MASTER,
-			AsTransaction: true,
+			AsTransaction: false,
 		}
 		res := NewResolver(new(sandboxTopo), "", "aa", 1*time.Millisecond, 0, 2*time.Millisecond, 1*time.Millisecond, 24*time.Hour)
 		qrs, err := res.ExecuteBatchKeyspaceIds(context.Background(), query)
@@ -223,11 +221,11 @@ func testResolverGeneric(t *testing.T, name string, action func() (*mproto.Query
 	if err != nil {
 		t.Errorf("want nil, got %v", err)
 	}
-	if sbc0.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
-	if sbc1.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc1.ExecCount)
+	if execCount := sbc1.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 
 	// non-retryable failure
@@ -237,8 +235,8 @@ func testResolverGeneric(t *testing.T, name string, action func() (*mproto.Query
 	sbc1 = &sandboxConn{mustFailRetry: 1}
 	s.MapTestConn("20-40", sbc1)
 	_, err = action()
-	want1 := fmt.Sprintf("shard, host: %s.-20.master, {Uid:0 Host:-20 NamedPortMap:map[vt:1] Health:map[]}, error: err", name)
-	want2 := fmt.Sprintf("shard, host: %s.20-40.master, {Uid:0 Host:20-40 NamedPortMap:map[vt:1] Health:map[]}, retry: err", name)
+	want1 := fmt.Sprintf("shard, host: %s.-20.master, host:\"-20\" port_map:<key:\"vt\" value:1 > , error: err", name)
+	want2 := fmt.Sprintf("shard, host: %s.20-40.master, host:\"20-40\" port_map:<key:\"vt\" value:1 > , retry: err", name)
 	want := []string{want1, want2}
 	sort.Strings(want)
 	if err == nil {
@@ -251,11 +249,11 @@ func testResolverGeneric(t *testing.T, name string, action func() (*mproto.Query
 		}
 	}
 	// Ensure that we tried only once
-	if sbc0.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
-	if sbc1.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc1.ExecCount)
+	if execCount := sbc1.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 	// Ensure that we tried topo only once when mapping KeyspaceId/KeyRange to shards
 	if s.SrvKeyspaceCounter != 1 {
@@ -269,8 +267,8 @@ func testResolverGeneric(t *testing.T, name string, action func() (*mproto.Query
 	sbc1 = &sandboxConn{mustFailFatal: 1}
 	s.MapTestConn("20-40", sbc1)
 	_, err = action()
-	want1 = fmt.Sprintf("shard, host: %s.-20.master, {Uid:0 Host:-20 NamedPortMap:map[vt:1] Health:map[]}, retry: err", name)
-	want2 = fmt.Sprintf("shard, host: %s.20-40.master, {Uid:0 Host:20-40 NamedPortMap:map[vt:1] Health:map[]}, fatal: err", name)
+	want1 = fmt.Sprintf("shard, host: %s.-20.master, host:\"-20\" port_map:<key:\"vt\" value:1 > , retry: err", name)
+	want2 = fmt.Sprintf("shard, host: %s.20-40.master, host:\"20-40\" port_map:<key:\"vt\" value:1 > , fatal: err", name)
 	want = []string{want1, want2}
 	sort.Strings(want)
 	if err == nil {
@@ -283,11 +281,11 @@ func testResolverGeneric(t *testing.T, name string, action func() (*mproto.Query
 		}
 	}
 	// Ensure that we tried only once.
-	if sbc0.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
-	if sbc1.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc1.ExecCount)
+	if execCount := sbc1.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 	// Ensure that we tried topo only twice.
 	if s.SrvKeyspaceCounter != 2 {
@@ -310,15 +308,15 @@ func testResolverGeneric(t *testing.T, name string, action func() (*mproto.Query
 		t.Errorf("want nil, got %v", err)
 	}
 	// Ensure original keyspace is not used.
-	if sbc0.ExecCount != 0 {
-		t.Errorf("want 0, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 0 {
+		t.Errorf("want 0, got %v", execCount)
 	}
-	if sbc1.ExecCount != 0 {
-		t.Errorf("want 0, got %v", sbc1.ExecCount)
+	if execCount := sbc1.ExecCount.Get(); execCount != 0 {
+		t.Errorf("want 0, got %v", execCount)
 	}
 	// Ensure redirected keyspace is accessed once.
-	if sbc2.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc2.ExecCount)
+	if execCount := sbc2.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 	// Ensure that we tried each keyspace only once.
 	if s.SrvKeyspaceCounter != 1 {
@@ -347,11 +345,11 @@ func testResolverGeneric(t *testing.T, name string, action func() (*mproto.Query
 		t.Errorf("want nil, got %v", err)
 	}
 	// Ensure that we tried only twice.
-	if sbc0.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
-	if sbc1.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc1.ExecCount)
+	if execCount := sbc1.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
 	// Ensure that we tried topo only 3 times.
 	if s.SrvKeyspaceCounter != 3 {
@@ -378,11 +376,11 @@ func testResolverGeneric(t *testing.T, name string, action func() (*mproto.Query
 		t.Errorf("want nil, got %v", err)
 	}
 	// Ensure that we tried only twice.
-	if sbc0.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
-	if sbc1.ExecCount != 2 {
-		t.Errorf("want 2, got %v", sbc1.ExecCount)
+	if execCount := sbc1.ExecCount.Get(); execCount != 2 {
+		t.Errorf("want 2, got %v", execCount)
 	}
 	// Ensure that we tried topo only twice.
 	if s.SrvKeyspaceCounter != 2 {
@@ -401,8 +399,8 @@ func testResolverStreamGeneric(t *testing.T, name string, action func() (*mproto
 	if err != nil {
 		t.Errorf("want nil, got %v", err)
 	}
-	if sbc0.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 
 	// failure
@@ -412,13 +410,13 @@ func testResolverStreamGeneric(t *testing.T, name string, action func() (*mproto
 	sbc1 = &sandboxConn{}
 	s.MapTestConn("20-40", sbc1)
 	_, err = action()
-	want := fmt.Sprintf("shard, host: %s.-20.master, {Uid:0 Host:-20 NamedPortMap:map[vt:1] Health:map[]}, retry: err", name)
+	want := fmt.Sprintf("shard, host: %s.-20.master, host:\"-20\" port_map:<key:\"vt\" value:1 > , retry: err", name)
 	if err == nil || err.Error() != want {
 		t.Errorf("want\n%s\ngot\n%v", want, err)
 	}
 	// Ensure that we tried only once.
-	if sbc0.ExecCount != 1 {
-		t.Errorf("want 1, got %v", sbc0.ExecCount)
+	if execCount := sbc0.ExecCount.Get(); execCount != 1 {
+		t.Errorf("want 1, got %v", execCount)
 	}
 	// Ensure that we tried topo only once
 	if s.SrvKeyspaceCounter != 1 {
@@ -511,6 +509,51 @@ func TestResolverDmlOnMultipleKeyspaceIds(t *testing.T) {
 	_, err = res.ExecuteKeyspaceIds(context.Background(), query)
 	if err == nil {
 		t.Errorf("want %v, got nil", errStr)
+	}
+}
+
+func TestResolverExecBatchAsTransaction(t *testing.T) {
+	s := createSandbox(KsTestUnshardedServedFrom)
+	sbc := &sandboxConn{mustFailRetry: 20}
+	s.MapTestConn("0", sbc)
+
+	res := NewResolver(new(sandboxTopo), "", "aa", 1*time.Millisecond, 2, 2*time.Millisecond, 1*time.Millisecond, 24*time.Hour)
+
+	callcount := 0
+	buildBatchRequest := func() (*scatterBatchRequest, error) {
+		callcount++
+		queries := []proto.BoundShardQuery{{
+			Sql:           "query",
+			BindVariables: nil,
+			Keyspace:      KsTestUnshardedServedFrom,
+			Shards:        []string{"0"},
+		}}
+		return boundShardQueriesToScatterBatchRequest(queries), nil
+	}
+
+	_, err := res.ExecuteBatch(context.Background(), topo.TYPE_MASTER, false, nil, buildBatchRequest)
+	if err == nil {
+		t.Errorf("want got, got none")
+	}
+	// Ensure scatter tried a re-resolve
+	if callcount != 2 {
+		t.Errorf("want 2, got %v", callcount)
+	}
+	if count := sbc.AsTransactionCount.Get(); count != 0 {
+		t.Errorf("want 0, got %v", count)
+	}
+
+	callcount = 0
+	_, err = res.ExecuteBatch(context.Background(), topo.TYPE_MASTER, true, nil, buildBatchRequest)
+	if err == nil {
+		t.Errorf("want got, got none")
+	}
+	// Ensure scatter did not re-resolve
+	if callcount != 1 {
+		t.Errorf("want 1, got %v", callcount)
+	}
+	if count := sbc.AsTransactionCount.Get(); count != 1 {
+		t.Errorf("want 1, got %v", count)
 	}
 }
 

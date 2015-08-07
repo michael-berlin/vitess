@@ -144,8 +144,8 @@ type Tablet struct {
 	Hostname string `protobuf:"bytes,2,opt,name=hostname" json:"hostname,omitempty"`
 	// IP address, stored as a string.
 	Ip string `protobuf:"bytes,3,opt,name=ip" json:"ip,omitempty"`
-	// Map of named ports. Normally this should include vt, vts, and mysql.
-	Portmap map[string]int32 `protobuf:"bytes,4,rep,name=portmap" json:"portmap,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	// Map of named ports. Normally this should include vt, grpc, and mysql.
+	PortMap map[string]int32 `protobuf:"bytes,4,rep,name=port_map" json:"port_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	// Keyspace name.
 	Keyspace string `protobuf:"bytes,5,opt,name=keyspace" json:"keyspace,omitempty"`
 	// Shard name. If range based sharding is used, it should match
@@ -175,9 +175,9 @@ func (m *Tablet) GetAlias() *TabletAlias {
 	return nil
 }
 
-func (m *Tablet) GetPortmap() map[string]int32 {
+func (m *Tablet) GetPortMap() map[string]int32 {
 	if m != nil {
-		return m.Portmap
+		return m.PortMap
 	}
 	return nil
 }
@@ -205,20 +205,23 @@ func (m *Tablet) GetHealthMap() map[string]string {
 
 // A Shard contains data about a subset of the data whithin a keyspace.
 type Shard struct {
-	// There can be only at most one master, but there may be none. (0)
+	// master_alias is the tablet alias of the master for the shard.
+	// If it is unset, then there is no master in this shard yet.
 	MasterAlias *TabletAlias `protobuf:"bytes,1,opt,name=master_alias" json:"master_alias,omitempty"`
+	// key_range is the KeyRange for this shard. It can be unset if:
+	// - we are not using range-based sharding in this shard.
+	// - the shard covers the entire keyrange.
 	// This must match the shard name based on our other conventions, but
 	// helpful to have it decomposed here.
 	KeyRange *KeyRange `protobuf:"bytes,2,opt,name=key_range" json:"key_range,omitempty"`
-	// served_type_map is a list here, but there is at most one entry
-	// per TabletType
-	ServedTypeMap []*Shard_ShardServedType `protobuf:"bytes,3,rep,name=served_type_map" json:"served_type_map,omitempty"`
+	// served_types has at most one entry per TabletType
+	ServedTypes []*Shard_ServedType `protobuf:"bytes,3,rep,name=served_types" json:"served_types,omitempty"`
 	// SourceShards is the list of shards we're replicating from,
 	// using filtered replication.
 	SourceShards []*Shard_SourceShard `protobuf:"bytes,4,rep,name=source_shards" json:"source_shards,omitempty"`
 	// Cells is the list of cells that contain tablets for this shard.
 	Cells []string `protobuf:"bytes,5,rep,name=cells" json:"cells,omitempty"`
-	// tablet_control_maps is a map in go, but a list in proto.
+	// tablet_controls has at most one entry per TabletType
 	TabletControls []*Shard_TabletControl `protobuf:"bytes,6,rep,name=tablet_controls" json:"tablet_controls,omitempty"`
 }
 
@@ -240,9 +243,9 @@ func (m *Shard) GetKeyRange() *KeyRange {
 	return nil
 }
 
-func (m *Shard) GetServedTypeMap() []*Shard_ShardServedType {
+func (m *Shard) GetServedTypes() []*Shard_ServedType {
 	if m != nil {
-		return m.ServedTypeMap
+		return m.ServedTypes
 	}
 	return nil
 }
@@ -261,15 +264,15 @@ func (m *Shard) GetTabletControls() []*Shard_TabletControl {
 	return nil
 }
 
-// ShardServedType is an entry in the served_type_map
-type Shard_ShardServedType struct {
+// ServedType is an entry in the served_types
+type Shard_ServedType struct {
 	TabletType TabletType `protobuf:"varint,1,opt,name=tablet_type,enum=topodata.TabletType" json:"tablet_type,omitempty"`
 	Cells      []string   `protobuf:"bytes,2,rep,name=cells" json:"cells,omitempty"`
 }
 
-func (m *Shard_ShardServedType) Reset()         { *m = Shard_ShardServedType{} }
-func (m *Shard_ShardServedType) String() string { return proto.CompactTextString(m) }
-func (*Shard_ShardServedType) ProtoMessage()    {}
+func (m *Shard_ServedType) Reset()         { *m = Shard_ServedType{} }
+func (m *Shard_ServedType) String() string { return proto.CompactTextString(m) }
+func (*Shard_ServedType) ProtoMessage()    {}
 
 // SourceShard represents a data source for filtered replication
 // accross shards. When this is used in a destination shard, the master
@@ -323,25 +326,25 @@ type Keyspace struct {
 	// SplitShardCount stores the number of jobs to run to be sure to
 	// always have at most one job per shard (used during resharding).
 	SplitShardCount int32 `protobuf:"varint,3,opt,name=split_shard_count" json:"split_shard_count,omitempty"`
-	// KeyspaceServedFrom will redirect the appropriate traffic to
+	// ServedFrom will redirect the appropriate traffic to
 	// another keyspace.
-	ServedFroms []*Keyspace_KeyspaceServedFrom `protobuf:"bytes,4,rep,name=served_froms" json:"served_froms,omitempty"`
+	ServedFroms []*Keyspace_ServedFrom `protobuf:"bytes,4,rep,name=served_froms" json:"served_froms,omitempty"`
 }
 
 func (m *Keyspace) Reset()         { *m = Keyspace{} }
 func (m *Keyspace) String() string { return proto.CompactTextString(m) }
 func (*Keyspace) ProtoMessage()    {}
 
-func (m *Keyspace) GetServedFroms() []*Keyspace_KeyspaceServedFrom {
+func (m *Keyspace) GetServedFroms() []*Keyspace_ServedFrom {
 	if m != nil {
 		return m.ServedFroms
 	}
 	return nil
 }
 
-// KeyspaceServedFrom indicates a relationship between a TabletType and the
+// ServedFrom indicates a relationship between a TabletType and the
 // keyspace name that's serving it.
-type Keyspace_KeyspaceServedFrom struct {
+type Keyspace_ServedFrom struct {
 	// the tablet type (key for the map)
 	TabletType TabletType `protobuf:"varint,1,opt,name=tablet_type,enum=topodata.TabletType" json:"tablet_type,omitempty"`
 	// the cells to limit this to
@@ -350,39 +353,39 @@ type Keyspace_KeyspaceServedFrom struct {
 	Keyspace string `protobuf:"bytes,3,opt,name=keyspace" json:"keyspace,omitempty"`
 }
 
-func (m *Keyspace_KeyspaceServedFrom) Reset()         { *m = Keyspace_KeyspaceServedFrom{} }
-func (m *Keyspace_KeyspaceServedFrom) String() string { return proto.CompactTextString(m) }
-func (*Keyspace_KeyspaceServedFrom) ProtoMessage()    {}
+func (m *Keyspace_ServedFrom) Reset()         { *m = Keyspace_ServedFrom{} }
+func (m *Keyspace_ServedFrom) String() string { return proto.CompactTextString(m) }
+func (*Keyspace_ServedFrom) ProtoMessage()    {}
 
 // ShardReplication describes the MySQL replication relationships
 // whithin a cell.
 type ShardReplication struct {
-	// Note there can be only one ReplicationLink in this array
-	// for a given Slave.
-	ReplicationLinks []*ShardReplication_ReplicationLink `protobuf:"bytes,1,rep,name=replication_links" json:"replication_links,omitempty"`
+	// Note there can be only one Node in this array
+	// for a given tablet.
+	Nodes []*ShardReplication_Node `protobuf:"bytes,1,rep,name=nodes" json:"nodes,omitempty"`
 }
 
 func (m *ShardReplication) Reset()         { *m = ShardReplication{} }
 func (m *ShardReplication) String() string { return proto.CompactTextString(m) }
 func (*ShardReplication) ProtoMessage()    {}
 
-func (m *ShardReplication) GetReplicationLinks() []*ShardReplication_ReplicationLink {
+func (m *ShardReplication) GetNodes() []*ShardReplication_Node {
 	if m != nil {
-		return m.ReplicationLinks
+		return m.Nodes
 	}
 	return nil
 }
 
-// ReplicationLink describes a tablet instance within the cell
-type ShardReplication_ReplicationLink struct {
+// Node describes a tablet instance within the cell
+type ShardReplication_Node struct {
 	TabletAlias *TabletAlias `protobuf:"bytes,1,opt,name=tablet_alias" json:"tablet_alias,omitempty"`
 }
 
-func (m *ShardReplication_ReplicationLink) Reset()         { *m = ShardReplication_ReplicationLink{} }
-func (m *ShardReplication_ReplicationLink) String() string { return proto.CompactTextString(m) }
-func (*ShardReplication_ReplicationLink) ProtoMessage()    {}
+func (m *ShardReplication_Node) Reset()         { *m = ShardReplication_Node{} }
+func (m *ShardReplication_Node) String() string { return proto.CompactTextString(m) }
+func (*ShardReplication_Node) ProtoMessage()    {}
 
-func (m *ShardReplication_ReplicationLink) GetTabletAlias() *TabletAlias {
+func (m *ShardReplication_Node) GetTabletAlias() *TabletAlias {
 	if m != nil {
 		return m.TabletAlias
 	}
@@ -396,7 +399,7 @@ type EndPoint struct {
 	// The host the tablet is running on (FQDN).
 	Host string `protobuf:"bytes,2,opt,name=host" json:"host,omitempty"`
 	// The ports opened for service.
-	Portmap map[string]int32 `protobuf:"bytes,3,rep,name=portmap" json:"portmap,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	PortMap map[string]int32 `protobuf:"bytes,3,rep,name=port_map" json:"port_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	// The health entries.
 	HealthMap map[string]string `protobuf:"bytes,4,rep,name=health_map" json:"health_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 }
@@ -405,9 +408,9 @@ func (m *EndPoint) Reset()         { *m = EndPoint{} }
 func (m *EndPoint) String() string { return proto.CompactTextString(m) }
 func (*EndPoint) ProtoMessage()    {}
 
-func (m *EndPoint) GetPortmap() map[string]int32 {
+func (m *EndPoint) GetPortMap() map[string]int32 {
 	if m != nil {
-		return m.Portmap
+		return m.PortMap
 	}
 	return nil
 }

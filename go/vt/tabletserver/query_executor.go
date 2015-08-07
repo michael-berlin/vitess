@@ -186,6 +186,7 @@ func (qre *QueryExecutor) execDmlAutoCommit() (reply *mproto.QueryResult, err er
 	return reply, err
 }
 
+// checkPermissions
 func (qre *QueryExecutor) checkPermissions() error {
 	// Skip permissions check if we have a background context.
 	if qre.ctx == context.Background() {
@@ -208,15 +209,37 @@ func (qre *QueryExecutor) checkPermissions() error {
 		return NewTabletError(ErrRetry, "Query disallowed due to rule: %s", desc)
 	}
 
-	// Perform table ACL check if it is enabled
-	if qre.plan.Authorized != nil && !qre.plan.Authorized.IsMember(username) {
-		errStr := fmt.Sprintf("table acl error: %q cannot run %v on table %q", username, qre.plan.PlanId, qre.plan.TableName)
-		// Raise error if in strictTableAcl mode, else just log an error
+	// a superuser that exempts from table ACL checking.
+	if qre.qe.exemptACL == username {
+		qre.qe.tableaclExemptCount.Add(1)
+		return nil
+	}
+	tableACLStatsKey := []string{
+		qre.plan.TableName,
+		// TODO(shengzhe): use table group instead of username.
+		username,
+		qre.plan.PlanId.String(),
+		username,
+	}
+	if qre.plan.Authorized == nil {
+		return NewTabletError(ErrFail, "table acl error: nil acl")
+	}
+	// perform table ACL check if it is enabled.
+	if !qre.plan.Authorized.IsMember(username) {
+		if qre.qe.enableTableAclDryRun {
+			qre.qe.tableaclPseudoDenied.Add(tableACLStatsKey, 1)
+			return nil
+		}
+		// raise error if in strictTableAcl mode, else just log an error.
 		if qre.qe.strictTableAcl {
+			errStr := fmt.Sprintf("table acl error: %q cannot run %v on table %q", username, qre.plan.PlanId, qre.plan.TableName)
+			qre.qe.tableaclDenied.Add(tableACLStatsKey, 1)
+			qre.qe.accessCheckerLogger.Errorf("%s", errStr)
 			return NewTabletError(ErrFail, "%s", errStr)
 		}
-		qre.qe.accessCheckerLogger.Errorf("%s", errStr)
+		return nil
 	}
+	qre.qe.tableaclAllowed.Add(tableACLStatsKey, 1)
 	return nil
 }
 

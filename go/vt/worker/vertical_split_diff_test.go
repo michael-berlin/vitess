@@ -23,6 +23,9 @@ import (
 	"github.com/youtube/vitess/go/vt/wrangler/testlib"
 	"github.com/youtube/vitess/go/vt/zktopo"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/query"
+	pbt "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // verticalDiffSqlQuery is a local QueryService implementation to
@@ -33,7 +36,7 @@ type verticalDiffSqlQuery struct {
 	excludedTable string
 }
 
-func (sq *verticalDiffSqlQuery) StreamExecute(ctx context.Context, query *proto.Query, sendReply func(reply *mproto.QueryResult) error) error {
+func (sq *verticalDiffSqlQuery) StreamExecute(ctx context.Context, target *pb.Target, query *proto.Query, sendReply func(reply *mproto.QueryResult) error) error {
 	if strings.Contains(query.Sql, sq.excludedTable) {
 		sq.t.Errorf("Vertical Split Diff operation should skip the excluded table: %v query: %v", sq.excludedTable, query.Sql)
 	}
@@ -93,11 +96,21 @@ func TestVerticalSplitDiff(t *testing.T) {
 		topo.TYPE_RDONLY, testlib.TabletKeyspaceShard(t, "source_ks", "0"))
 
 	// Create the destination keyspace with the appropriate ServedFromMap
-	ki := &topo.Keyspace{}
-	ki.ServedFromMap = map[topo.TabletType]*topo.KeyspaceServedFrom{
-		topo.TYPE_MASTER:  &topo.KeyspaceServedFrom{Keyspace: "source_ks"},
-		topo.TYPE_REPLICA: &topo.KeyspaceServedFrom{Keyspace: "source_ks"},
-		topo.TYPE_RDONLY:  &topo.KeyspaceServedFrom{Keyspace: "source_ks"},
+	ki := &pbt.Keyspace{
+		ServedFroms: []*pbt.Keyspace_ServedFrom{
+			&pbt.Keyspace_ServedFrom{
+				TabletType: pbt.TabletType_MASTER,
+				Keyspace:   "source_ks",
+			},
+			&pbt.Keyspace_ServedFrom{
+				TabletType: pbt.TabletType_REPLICA,
+				Keyspace:   "source_ks",
+			},
+			&pbt.Keyspace_ServedFrom{
+				TabletType: pbt.TabletType_RDONLY,
+				Keyspace:   "source_ks",
+			},
+		},
 	}
 	wr.TopoServer().CreateKeyspace(ctx, "destination_ks", ki)
 

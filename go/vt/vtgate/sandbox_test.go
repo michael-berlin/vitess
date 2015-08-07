@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/context"
 
 	pb "github.com/youtube/vitess/go/vt/proto/query"
+	pbt "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // sandbox_test.go provides a sandbox for unit testing VTGate.
@@ -122,7 +123,7 @@ func (s *sandbox) Reset() {
 // with variables other than sandboxConn.
 type sandboxableConn interface {
 	tabletconn.TabletConn
-	setEndPoint(topo.EndPoint)
+	setEndPoint(*pbt.EndPoint)
 }
 
 func (s *sandbox) MapTestConn(shard string, conn sandboxableConn) {
@@ -133,10 +134,10 @@ func (s *sandbox) MapTestConn(shard string, conn sandboxableConn) {
 		conns = make(map[uint32]tabletconn.TabletConn)
 	}
 	uid := uint32(len(conns))
-	conn.setEndPoint(topo.EndPoint{
-		Uid:          uid,
-		Host:         shard,
-		NamedPortMap: map[string]int{"vt": 1},
+	conn.setEndPoint(&pbt.EndPoint{
+		Uid:     uid,
+		Host:    shard,
+		PortMap: map[string]int32{"vt": 1},
 	})
 	conns[uid] = conn
 	s.TestConns[shard] = conns
@@ -267,11 +268,11 @@ func (sct *sandboxTopo) GetSrvKeyspace(ctx context.Context, cell, keyspace strin
 	return createShardedSrvKeyspace(sand.ShardSpec, sand.KeyspaceServedFrom)
 }
 
-func (sct *sandboxTopo) GetSrvShard(ctx context.Context, cell, keyspace, shard string) (*topo.SrvShard, error) {
+func (sct *sandboxTopo) GetSrvShard(ctx context.Context, cell, keyspace, shard string) (*pbt.SrvShard, error) {
 	return nil, fmt.Errorf("Unsupported")
 }
 
-func (sct *sandboxTopo) GetEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType) (*topo.EndPoints, int64, error) {
+func (sct *sandboxTopo) GetEndPoints(ctx context.Context, cell, keyspace, shard string, tabletType topo.TabletType) (*pbt.EndPoints, int64, error) {
 	sand := getSandbox(keyspace)
 	sand.EndPointCounter++
 	if sct.callbackGetEndPoints != nil {
@@ -282,14 +283,14 @@ func (sct *sandboxTopo) GetEndPoints(ctx context.Context, cell, keyspace, shard 
 		return nil, -1, fmt.Errorf("topo error")
 	}
 	conns := sand.TestConns[shard]
-	ep := &topo.EndPoints{}
+	ep := &pbt.EndPoints{}
 	for _, conn := range conns {
 		ep.Entries = append(ep.Entries, conn.EndPoint())
 	}
 	return ep, -1, nil
 }
 
-func sandboxDialer(ctx context.Context, endPoint topo.EndPoint, keyspace, shard string, timeout time.Duration) (tabletconn.TabletConn, error) {
+func sandboxDialer(ctx context.Context, endPoint *pbt.EndPoint, keyspace, shard string, tabletType pbt.TabletType, timeout time.Duration) (tabletconn.TabletConn, error) {
 	sand := getSandbox(keyspace)
 	sand.sandmu.Lock()
 	defer sand.sandmu.Unlock()
@@ -313,7 +314,7 @@ func sandboxDialer(ctx context.Context, endPoint topo.EndPoint, keyspace, shard 
 
 // sandboxConn satisfies the TabletConn interface
 type sandboxConn struct {
-	endPoint       topo.EndPoint
+	endPoint       *pbt.EndPoint
 	mustFailRetry  int
 	mustFailFatal  int
 	mustFailServer int
@@ -327,11 +328,12 @@ type sandboxConn struct {
 
 	// These Count vars report how often the corresponding
 	// functions were called.
-	ExecCount     sync2.AtomicInt64
-	BeginCount    sync2.AtomicInt64
-	CommitCount   sync2.AtomicInt64
-	RollbackCount sync2.AtomicInt64
-	CloseCount    sync2.AtomicInt64
+	ExecCount          sync2.AtomicInt64
+	BeginCount         sync2.AtomicInt64
+	CommitCount        sync2.AtomicInt64
+	RollbackCount      sync2.AtomicInt64
+	CloseCount         sync2.AtomicInt64
+	AsTransactionCount sync2.AtomicInt64
 
 	// Queries stores the requests received.
 	Queries []tproto.BoundQuery
@@ -405,6 +407,9 @@ func (sbc *sandboxConn) Execute2(ctx context.Context, query string, bindVars map
 
 func (sbc *sandboxConn) ExecuteBatch(ctx context.Context, queries []tproto.BoundQuery, asTransaction bool, transactionID int64) (*tproto.QueryResultList, error) {
 	sbc.ExecCount.Add(1)
+	if asTransaction {
+		sbc.AsTransactionCount.Add(1)
+	}
 	if sbc.mustDelay != 0 {
 		time.Sleep(sbc.mustDelay)
 	}
@@ -519,11 +524,15 @@ func (sbc *sandboxConn) Close() {
 	sbc.CloseCount.Add(1)
 }
 
-func (sbc *sandboxConn) EndPoint() topo.EndPoint {
+func (sbc *sandboxConn) SetTarget(keyspace, shard string, tabletType pbt.TabletType) error {
+	return fmt.Errorf("not implemented, vtgate doesn't use target yet")
+}
+
+func (sbc *sandboxConn) EndPoint() *pbt.EndPoint {
 	return sbc.endPoint
 }
 
-func (sbc *sandboxConn) setEndPoint(ep topo.EndPoint) {
+func (sbc *sandboxConn) setEndPoint(ep *pbt.EndPoint) {
 	sbc.endPoint = ep
 }
 

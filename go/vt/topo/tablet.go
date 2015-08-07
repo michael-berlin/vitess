@@ -19,6 +19,8 @@ import (
 	"github.com/youtube/vitess/go/netutil"
 	"github.com/youtube/vitess/go/trace"
 	"github.com/youtube/vitess/go/vt/key"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 const (
@@ -54,6 +56,22 @@ type TabletAlias struct {
 // IsZero returns true iff cell and uid are empty
 func (ta TabletAlias) IsZero() bool {
 	return ta.Cell == "" && ta.Uid == 0
+}
+
+// TabletAliasIsZero returns true iff cell and uid are empty
+func TabletAliasIsZero(ta *pb.TabletAlias) bool {
+	return ta == nil || (ta.Cell == "" && ta.Uid == 0)
+}
+
+// TabletAliasEqual returns true if two TabletAlias match
+func TabletAliasEqual(left, right *pb.TabletAlias) bool {
+	if left == nil {
+		return right == nil
+	}
+	if right == nil {
+		return false
+	}
+	return *left == *right
 }
 
 // String formats a TabletAlias
@@ -314,7 +332,7 @@ type Tablet struct {
 	Hostname string
 	IPAddr   string
 
-	// Named port names. Currently supported ports: vt, vts,
+	// Named port names. Currently supported ports: vt, grpc,
 	// mysql.
 	Portmap map[string]int
 
@@ -350,21 +368,20 @@ func (tablet *Tablet) ValidatePortmap() error {
 }
 
 // EndPoint returns an EndPoint associated with the tablet record
-func (tablet *Tablet) EndPoint() (*EndPoint, error) {
-	entry := NewEndPoint(tablet.Alias.Uid, tablet.Hostname)
+func (tablet *Tablet) EndPoint() (*pb.EndPoint, error) {
 	if err := tablet.ValidatePortmap(); err != nil {
 		return nil, err
 	}
 
-	entry.NamedPortMap = map[string]int{}
+	entry := NewEndPoint(tablet.Alias.Uid, tablet.Hostname)
 	for name, port := range tablet.Portmap {
-		entry.NamedPortMap[name] = port
+		entry.PortMap[name] = int32(port)
 	}
 
 	if len(tablet.Health) > 0 {
-		entry.Health = make(map[string]string, len(tablet.Health))
+		entry.HealthMap = make(map[string]string, len(tablet.Health))
 		for k, v := range tablet.Health {
-			entry.Health[k] = v
+			entry.HealthMap[k] = v
 		}
 	}
 	return entry, nil
@@ -372,17 +389,17 @@ func (tablet *Tablet) EndPoint() (*EndPoint, error) {
 
 // Addr returns hostname:vt port.
 func (tablet *Tablet) Addr() string {
-	return netutil.JoinHostPort(tablet.Hostname, tablet.Portmap["vt"])
+	return netutil.JoinHostPort(tablet.Hostname, int32(tablet.Portmap["vt"]))
 }
 
 // MysqlAddr returns hostname:mysql port.
 func (tablet *Tablet) MysqlAddr() string {
-	return netutil.JoinHostPort(tablet.Hostname, tablet.Portmap["mysql"])
+	return netutil.JoinHostPort(tablet.Hostname, int32(tablet.Portmap["mysql"]))
 }
 
 // MysqlIPAddr returns ip:mysql port.
 func (tablet *Tablet) MysqlIPAddr() string {
-	return netutil.JoinHostPort(tablet.IPAddr, tablet.Portmap["mysql"])
+	return netutil.JoinHostPort(tablet.IPAddr, int32(tablet.Portmap["mysql"]))
 }
 
 // DbName is usually implied by keyspace. Having the shard information in the
@@ -449,9 +466,13 @@ func (ti *TabletInfo) Version() int64 {
 // Complete validates and normalizes the tablet. If the shard name
 // contains a '-' it is going to try to infer the keyrange from it.
 func (tablet *Tablet) Complete() error {
-	var err error
-	tablet.Shard, tablet.KeyRange, err = ValidateShardName(tablet.Shard)
-	return err
+	shard, kr, err := ValidateShardName(tablet.Shard)
+	if err != nil {
+		return err
+	}
+	tablet.Shard = shard
+	tablet.KeyRange = key.ProtoToKeyRange(kr)
+	return nil
 }
 
 // IsHealthEqual compares the tablet's health with the passed one, and
@@ -538,7 +559,7 @@ func Validate(ctx context.Context, ts Server, tabletAlias TabletAlias) error {
 			return err
 		}
 
-		_, err = si.GetReplicationLink(tabletAlias)
+		_, err = si.GetShardReplicationNode(TabletAliasToProto(tabletAlias))
 		if err != nil {
 			return fmt.Errorf("tablet %v not found in cell %v shard replication: %v", tabletAlias, tablet.Alias.Cell, err)
 		}
@@ -553,9 +574,9 @@ func Validate(ctx context.Context, ts Server, tabletAlias TabletAlias) error {
 			return err
 		}
 
-		rl, err := si.GetReplicationLink(tabletAlias)
+		node, err := si.GetShardReplicationNode(TabletAliasToProto(tabletAlias))
 		if err != ErrNoNode {
-			return fmt.Errorf("unexpected replication data found(possible pending action?): %v (%v)", rl, tablet.Type)
+			return fmt.Errorf("unexpected replication data found(possible pending action?): %v (%v)", node, tablet.Type)
 		}
 	}
 

@@ -15,6 +15,8 @@ import (
 	"github.com/youtube/vitess/go/jscfg"
 	"github.com/youtube/vitess/go/vt/topo"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 func TestSplitCellPath(t *testing.T) {
@@ -75,8 +77,8 @@ func TestHandlePathRoot(t *testing.T) {
 func TestHandlePathKeyspace(t *testing.T) {
 	input := path.Join(explorerRoot, "global", keyspaceDirPath("test_keyspace"))
 	cells := []string{"cell1", "cell2", "cell3"}
-	keyspace := &topo.Keyspace{}
-	shard := &topo.Shard{}
+	keyspace := &pb.Keyspace{}
+	shard := &pb.Shard{}
 	want := jscfg.ToJSON(keyspace)
 
 	ctx := context.Background()
@@ -112,8 +114,8 @@ func TestHandlePathKeyspace(t *testing.T) {
 func TestHandlePathShard(t *testing.T) {
 	input := path.Join(explorerRoot, "global", shardDirPath("test_keyspace", "-80"))
 	cells := []string{"cell1", "cell2", "cell3"}
-	keyspace := &topo.Keyspace{}
-	shard := &topo.Shard{}
+	keyspace := &pb.Keyspace{}
+	shard := &pb.Shard{}
 	want := jscfg.ToJSON(shard)
 
 	ctx := context.Background()

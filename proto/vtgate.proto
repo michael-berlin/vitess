@@ -4,6 +4,8 @@ syntax = "proto3";
 
 package vtgate;
 
+option java_package="com.youtube.vitess.proto";
+
 import "query.proto";
 import "topodata.proto";
 import "vtrpc.proto";
@@ -292,4 +294,14 @@ message SplitQueryResponse {
     int64 size = 4;
   }
   repeated Part splits = 1;
+}
+
+// GetSrvKeyspaceRequest is the payload to GetSrvKeyspace
+message GetSrvKeyspaceRequest {
+  string keyspace = 1;
+}
+
+// GetSrvKeyspaceResponse is the returned value from GetSrvKeyspace
+message GetSrvKeyspaceResponse {
+  topodata.SrvKeyspace srv_keyspace = 1;
 }

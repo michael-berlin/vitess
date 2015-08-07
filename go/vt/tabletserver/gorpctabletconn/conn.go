@@ -5,7 +5,6 @@
 package gorpctabletconn
 
 import (
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"strings"
@@ -16,58 +15,56 @@ import (
 	"github.com/youtube/vitess/go/netutil"
 	"github.com/youtube/vitess/go/rpcplus"
 	"github.com/youtube/vitess/go/rpcwrap/bsonrpc"
+	"github.com/youtube/vitess/go/vt/callerid"
 	"github.com/youtube/vitess/go/vt/rpc"
 	tproto "github.com/youtube/vitess/go/vt/tabletserver/proto"
 	"github.com/youtube/vitess/go/vt/tabletserver/tabletconn"
-	"github.com/youtube/vitess/go/vt/topo"
 	"github.com/youtube/vitess/go/vt/vterrors"
 	"golang.org/x/net/context"
 
 	pb "github.com/youtube/vitess/go/vt/proto/query"
+	pbt "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
+const protocolName = "gorpc"
+
 var (
-	tabletBsonUsername  = flag.String("tablet-bson-username", "", "user to use for bson rpc connections")
-	tabletBsonPassword  = flag.String("tablet-bson-password", "", "password to use for bson rpc connections (ignored if username is empty)")
-	tabletBsonEncrypted = flag.Bool("tablet-bson-encrypted", false, "use encryption to talk to vttablet")
+	tabletBsonUsername = flag.String("tablet-bson-username", "", "user to use for bson rpc connections")
+	tabletBsonPassword = flag.String("tablet-bson-password", "", "password to use for bson rpc connections (ignored if username is empty)")
 )
 
 func init() {
-	tabletconn.RegisterDialer("gorpc", DialTablet)
+	tabletconn.RegisterDialer(protocolName, DialTablet)
 }
 
 // TabletBson implements a bson rpcplus implementation for TabletConn
 type TabletBson struct {
+	// endPoint is set at construction time, and never changed
+	endPoint *pbt.EndPoint
+
+	// mu protects the next fields
 	mu        sync.RWMutex
-	endPoint  topo.EndPoint
 	rpcClient *rpcplus.Client
 	sessionID int64
+	target    *tproto.Target
 }
 
 // DialTablet creates and initializes TabletBson.
-func DialTablet(ctx context.Context, endPoint topo.EndPoint, keyspace, shard string, timeout time.Duration) (tabletconn.TabletConn, error) {
-	var addr string
-	var config *tls.Config
-	if *tabletBsonEncrypted {
-		addr = netutil.JoinHostPort(endPoint.Host, endPoint.NamedPortMap["vts"])
-		config = &tls.Config{}
-		config.InsecureSkipVerify = true
-	} else {
-		addr = netutil.JoinHostPort(endPoint.Host, endPoint.NamedPortMap["vt"])
-	}
-
+func DialTablet(ctx context.Context, endPoint *pbt.EndPoint, keyspace, shard string, tabletType pbt.TabletType, timeout time.Duration) (tabletconn.TabletConn, error) {
+	addr := netutil.JoinHostPort(endPoint.Host, endPoint.PortMap["vt"])
 	conn := &TabletBson{endPoint: endPoint}
 	var err error
 	if *tabletBsonUsername != "" {
-		conn.rpcClient, err = bsonrpc.DialAuthHTTP("tcp", addr, *tabletBsonUsername, *tabletBsonPassword, timeout, config)
+		conn.rpcClient, err = bsonrpc.DialAuthHTTP("tcp", addr, *tabletBsonUsername, *tabletBsonPassword, timeout)
 	} else {
-		conn.rpcClient, err = bsonrpc.DialHTTP("tcp", addr, timeout, config)
+		conn.rpcClient, err = bsonrpc.DialHTTP("tcp", addr, timeout)
 	}
 	if err != nil {
 		return nil, tabletError(err)
 	}
 
-	if keyspace != "" || shard != "" {
+	if tabletType == pbt.TabletType_UNKNOWN {
+		// we use session
 		var sessionInfo tproto.SessionInfo
 		if err = conn.rpcClient.Call(ctx, "SqlQuery.GetSessionId", tproto.SessionParams{Keyspace: keyspace, Shard: shard}, &sessionInfo); err != nil {
 			conn.rpcClient.Close()
@@ -79,6 +76,13 @@ func DialTablet(ctx context.Context, endPoint topo.EndPoint, keyspace, shard str
 			return nil, tabletError(err)
 		}
 		conn.sessionID = sessionInfo.SessionId
+	} else {
+		// we use target
+		conn.target = &tproto.Target{
+			Keyspace:   keyspace,
+			Shard:      shard,
+			TabletType: tproto.TabletType(tabletType),
+		}
 	}
 	return conn, nil
 }
@@ -129,6 +133,26 @@ func (conn *TabletBson) Execute(ctx context.Context, query string, bindVars map[
 	return qr, nil
 }
 
+func getEffectiveCallerID(ctx context.Context) *tproto.CallerID {
+	if ef := callerid.EffectiveCallerIDFromContext(ctx); ef != nil {
+		return &tproto.CallerID{
+			Principal:    ef.Principal,
+			Component:    ef.Component,
+			Subcomponent: ef.Subcomponent,
+		}
+	}
+	return nil
+}
+
+func getImmediateCallerID(ctx context.Context) *tproto.VTGateCallerID {
+	if im := callerid.ImmediateCallerIDFromContext(ctx); im != nil {
+		return &tproto.VTGateCallerID{
+			Username: im.Username,
+		}
+	}
+	return nil
+}
+
 // Execute2 should not be used now other than in tests.
 // It is the CallerID enabled version of Execute
 // Execute2 sends to query to VTTablet
@@ -140,6 +164,9 @@ func (conn *TabletBson) Execute2(ctx context.Context, query string, bindVars map
 	}
 
 	req := &tproto.ExecuteRequest{
+		Target:            conn.target,
+		EffectiveCallerID: getEffectiveCallerID(ctx),
+		ImmediateCallerID: getImmediateCallerID(ctx),
 		QueryRequest: tproto.Query{
 			Sql:           query,
 			BindVariables: bindVars,
@@ -203,6 +230,9 @@ func (conn *TabletBson) ExecuteBatch2(ctx context.Context, queries []tproto.Boun
 	}
 
 	req := tproto.ExecuteBatchRequest{
+		Target:            conn.target,
+		EffectiveCallerID: getEffectiveCallerID(ctx),
+		ImmediateCallerID: getImmediateCallerID(ctx),
 		QueryBatch: tproto.QueryList{
 			Queries:       queries,
 			AsTransaction: asTransaction,
@@ -287,13 +317,17 @@ func (conn *TabletBson) StreamExecute2(ctx context.Context, query string, bindVa
 		return nil, nil, tabletconn.ConnClosed
 	}
 
-	q := &tproto.Query{
-		Sql:           query,
-		BindVariables: bindVars,
-		TransactionId: transactionID,
-		SessionId:     conn.sessionID,
+	req := &tproto.StreamExecuteRequest{
+		Target:            conn.target,
+		EffectiveCallerID: getEffectiveCallerID(ctx),
+		ImmediateCallerID: getImmediateCallerID(ctx),
+		Query: &tproto.Query{
+			Sql:           query,
+			BindVariables: bindVars,
+			TransactionId: transactionID,
+			SessionId:     conn.sessionID,
+		},
 	}
-	req := &tproto.StreamExecuteRequest{Query: q}
 	// Use QueryResult instead of StreamExecuteResult for now, due to backwards compatability reasons.
 	// It'll be easuer to migrate all end-points to using StreamExecuteResult instead of
 	// maintaining a mixture of QueryResult and StreamExecuteResult channel returns.
@@ -370,7 +404,10 @@ func (conn *TabletBson) Begin2(ctx context.Context) (transactionID int64, err er
 	}
 
 	beginRequest := &tproto.BeginRequest{
-		SessionId: conn.sessionID,
+		Target:            conn.target,
+		EffectiveCallerID: getEffectiveCallerID(ctx),
+		ImmediateCallerID: getImmediateCallerID(ctx),
+		SessionId:         conn.sessionID,
 	}
 	beginResponse := new(tproto.BeginResponse)
 	action := func() error {
@@ -415,8 +452,11 @@ func (conn *TabletBson) Commit2(ctx context.Context, transactionID int64) error 
 	}
 
 	commitRequest := &tproto.CommitRequest{
-		SessionId:     conn.sessionID,
-		TransactionId: transactionID,
+		Target:            conn.target,
+		EffectiveCallerID: getEffectiveCallerID(ctx),
+		ImmediateCallerID: getImmediateCallerID(ctx),
+		SessionId:         conn.sessionID,
+		TransactionId:     transactionID,
 	}
 	commitResponse := new(tproto.CommitResponse)
 	action := func() error {
@@ -461,8 +501,11 @@ func (conn *TabletBson) Rollback2(ctx context.Context, transactionID int64) erro
 	}
 
 	rollbackRequest := &tproto.RollbackRequest{
-		SessionId:     conn.sessionID,
-		TransactionId: transactionID,
+		Target:            conn.target,
+		EffectiveCallerID: getEffectiveCallerID(ctx),
+		ImmediateCallerID: getImmediateCallerID(ctx),
+		SessionId:         conn.sessionID,
+		TransactionId:     transactionID,
 	}
 	rollbackResponse := new(tproto.RollbackResponse)
 	action := func() error {
@@ -486,10 +529,13 @@ func (conn *TabletBson) SplitQuery(ctx context.Context, query tproto.BoundQuery,
 		return
 	}
 	req := &tproto.SplitQueryRequest{
-		Query:       query,
-		SplitColumn: splitColumn,
-		SplitCount:  splitCount,
-		SessionID:   conn.sessionID,
+		Target:            conn.target,
+		EffectiveCallerID: getEffectiveCallerID(ctx),
+		ImmediateCallerID: getImmediateCallerID(ctx),
+		Query:             query,
+		SplitColumn:       splitColumn,
+		SplitCount:        splitCount,
+		SessionID:         conn.sessionID,
 	}
 	reply := new(tproto.SplitQueryResult)
 	action := func() error {
@@ -535,8 +581,26 @@ func (conn *TabletBson) Close() {
 	rpcClient.Close()
 }
 
+// SetTarget can be called to change the target used for subsequent calls.
+func (conn *TabletBson) SetTarget(keyspace, shard string, tabletType pbt.TabletType) error {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if conn.target == nil {
+		return fmt.Errorf("cannot set target on sessionId based conn")
+	}
+	if tabletType == pbt.TabletType_UNKNOWN {
+		return fmt.Errorf("cannot set tablet type to UNKNOWN")
+	}
+	conn.target = &tproto.Target{
+		Keyspace:   keyspace,
+		Shard:      shard,
+		TabletType: tproto.TabletType(tabletType),
+	}
+	return nil
+}
+
 // EndPoint returns the rpc end point.
-func (conn *TabletBson) EndPoint() topo.EndPoint {
+func (conn *TabletBson) EndPoint() *pbt.EndPoint {
 	return conn.endPoint
 }
 

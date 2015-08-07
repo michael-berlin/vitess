@@ -45,6 +45,8 @@ import (
 	"github.com/youtube/vitess/go/vt/tabletserver"
 	"github.com/youtube/vitess/go/vt/topo"
 	"github.com/youtube/vitess/go/vt/topotools"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 var (
@@ -88,7 +90,7 @@ type ActionAgent struct {
 	// to update the fields, nothing else.
 	mutex            sync.Mutex
 	_tablet          *topo.TabletInfo
-	_tabletControl   *topo.TabletControl
+	_tabletControl   *pb.Shard_TabletControl
 	_waitingForMysql bool
 
 	// if the agent is healthy, this is nil. Otherwise it contains
@@ -131,7 +133,7 @@ func NewActionAgent(
 	tabletAlias topo.TabletAlias,
 	dbcfgs *dbconfigs.DBConfigs,
 	mycnf *mysqlctl.Mycnf,
-	port, securePort, gRPCPort int,
+	port, gRPCPort int,
 	overridesFile string,
 	lockTimeout time.Duration,
 ) (agent *ActionAgent, err error) {
@@ -155,7 +157,7 @@ func NewActionAgent(
 	}
 
 	// try to initialize the tablet if we have to
-	if err := agent.InitTablet(port, securePort, gRPCPort); err != nil {
+	if err := agent.InitTablet(port, gRPCPort); err != nil {
 		return nil, fmt.Errorf("agent.InitTablet failed: %v", err)
 	}
 
@@ -179,7 +181,7 @@ func NewActionAgent(
 		}
 	}
 
-	if err := agent.Start(batchCtx, mysqlPort, port, securePort, gRPCPort); err != nil {
+	if err := agent.Start(batchCtx, mysqlPort, port, gRPCPort); err != nil {
 		return nil, err
 	}
 
@@ -227,7 +229,7 @@ func NewTestActionAgent(batchCtx context.Context, ts topo.Server, tabletAlias to
 		lastHealthMapCount:  new(stats.Int),
 		_healthy:            fmt.Errorf("healthcheck not run yet"),
 	}
-	if err := agent.Start(batchCtx, 0, vtPort, 0, grpcPort); err != nil {
+	if err := agent.Start(batchCtx, 0, vtPort, grpcPort); err != nil {
 		panic(fmt.Errorf("agent.Start(%v) failed: %v", tabletAlias, err))
 	}
 	return agent
@@ -317,7 +319,7 @@ func (agent *ActionAgent) DisableQueryService() bool {
 	return disable
 }
 
-func (agent *ActionAgent) setTabletControl(tc *topo.TabletControl) {
+func (agent *ActionAgent) setTabletControl(tc *pb.Shard_TabletControl) {
 	agent.mutex.Lock()
 	agent._tabletControl = tc
 	agent.mutex.Unlock()
@@ -384,7 +386,7 @@ func (agent *ActionAgent) verifyServingAddrs(ctx context.Context) error {
 
 // Start validates and updates the topology records for the tablet, and performs
 // the initial state change callback to start tablet services.
-func (agent *ActionAgent) Start(ctx context.Context, mysqlPort, vtPort, vtsPort, gRPCPort int) error {
+func (agent *ActionAgent) Start(ctx context.Context, mysqlPort, vtPort, gRPCPort int) error {
 	var err error
 	if _, err = agent.readTablet(ctx); err != nil {
 		return err
@@ -421,11 +423,7 @@ func (agent *ActionAgent) Start(ctx context.Context, mysqlPort, vtPort, vtsPort,
 		} else {
 			delete(tablet.Portmap, "vt")
 		}
-		if vtsPort != 0 {
-			tablet.Portmap["vts"] = vtsPort
-		} else {
-			delete(tablet.Portmap, "vts")
-		}
+		delete(tablet.Portmap, "vts")
 		if gRPCPort != 0 {
 			tablet.Portmap["grpc"] = gRPCPort
 		} else {

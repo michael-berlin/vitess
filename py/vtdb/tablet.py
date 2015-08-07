@@ -71,13 +71,14 @@ class TabletConnection(object):
   _stream_result = None
   _stream_result_index = None
 
-  def __init__(self, addr, tablet_type, keyspace, shard, timeout, user=None, password=None, encrypted=False, keyfile=None, certfile=None):
+  def __init__(self, addr, tablet_type, keyspace, shard, timeout, user=None, password=None, keyfile=None, certfile=None):
     self.addr = addr
     self.tablet_type = tablet_type
     self.keyspace = keyspace
     self.shard = shard
     self.timeout = timeout
-    self.client = bsonrpc.BsonRpcClient(addr, timeout, user, password, encrypted=encrypted, keyfile=keyfile, certfile=certfile)
+    self.client = bsonrpc.BsonRpcClient(addr, timeout, user, password,
+                                        keyfile=keyfile, certfile=certfile)
     self.logger_object = vtdb_logger.get_logger()
 
   def __str__(self):
@@ -213,7 +214,7 @@ class TabletConnection(object):
       raise
     return results, rowcount, lastrowid, fields
 
-  def _execute_batch(self, sql_list, bind_variables_list):
+  def _execute_batch(self, sql_list, bind_variables_list, as_transaction):
     query_list = []
     for sql, bind_vars in zip(sql_list, bind_variables_list):
       query = {}
@@ -226,6 +227,7 @@ class TabletConnection(object):
     try:
       req = self._make_req()
       req['Queries'] = query_list
+      req['AsTransaction'] = as_transaction
       response = self.rpc_call_and_extract_error('SqlQuery.ExecuteBatch', req)
       for reply in response.reply['List']:
         fields = []

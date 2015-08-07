@@ -14,7 +14,8 @@ import (
 	mproto "github.com/youtube/vitess/go/mysql/proto"
 	"github.com/youtube/vitess/go/vt/binlog/proto"
 	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/topo"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 /*
@@ -30,7 +31,7 @@ type ErrFunc func() error
 // Client is the interface all clients must satisfy
 type Client interface {
 	// Dial a server
-	Dial(endPoint topo.EndPoint, connTimeout time.Duration) error
+	Dial(endPoint *pb.EndPoint, connTimeout time.Duration) error
 
 	// Close the connection
 	Close()
@@ -45,7 +46,7 @@ type Client interface {
 
 	// Ask the server to stream updates related to the provided keyrange.
 	// Should return context.Canceled if the context is canceled.
-	StreamKeyRange(ctx context.Context, position string, keyspaceIdType key.KeyspaceIdType, keyRange key.KeyRange, charset *mproto.Charset) (chan *proto.BinlogTransaction, ErrFunc, error)
+	StreamKeyRange(ctx context.Context, position string, keyspaceIdType key.KeyspaceIdType, keyRange *pb.KeyRange, charset *mproto.Charset) (chan *proto.BinlogTransaction, ErrFunc, error)
 }
 
 // ClientFactory is the factory method to create a Client

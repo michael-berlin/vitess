@@ -26,6 +26,9 @@ import (
 	"github.com/youtube/vitess/go/vt/wrangler/testlib"
 	"github.com/youtube/vitess/go/vt/zktopo"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/query"
+	pbt "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // verticalSqlQuery is a local QueryService implementation to support the tests
@@ -34,7 +37,7 @@ type verticalSqlQuery struct {
 	t *testing.T
 }
 
-func (sq *verticalSqlQuery) StreamExecute(ctx context.Context, query *proto.Query, sendReply func(reply *mproto.QueryResult) error) error {
+func (sq *verticalSqlQuery) StreamExecute(ctx context.Context, target *pb.Target, query *proto.Query, sendReply func(reply *mproto.QueryResult) error) error {
 	// Custom parsing of the query we expect
 	min := 100
 	max := 200
@@ -237,11 +240,21 @@ func testVerticalSplitClone(t *testing.T, strategy string) {
 		topo.TYPE_RDONLY, testlib.TabletKeyspaceShard(t, "source_ks", "0"))
 
 	// Create the destination keyspace with the appropriate ServedFromMap
-	ki := &topo.Keyspace{}
-	ki.ServedFromMap = map[topo.TabletType]*topo.KeyspaceServedFrom{
-		topo.TYPE_MASTER:  &topo.KeyspaceServedFrom{Keyspace: "source_ks"},
-		topo.TYPE_REPLICA: &topo.KeyspaceServedFrom{Keyspace: "source_ks"},
-		topo.TYPE_RDONLY:  &topo.KeyspaceServedFrom{Keyspace: "source_ks"},
+	ki := &pbt.Keyspace{
+		ServedFroms: []*pbt.Keyspace_ServedFrom{
+			&pbt.Keyspace_ServedFrom{
+				TabletType: pbt.TabletType_MASTER,
+				Keyspace:   "source_ks",
+			},
+			&pbt.Keyspace_ServedFrom{
+				TabletType: pbt.TabletType_REPLICA,
+				Keyspace:   "source_ks",
+			},
+			&pbt.Keyspace_ServedFrom{
+				TabletType: pbt.TabletType_RDONLY,
+				Keyspace:   "source_ks",
+			},
+		},
 	}
 	ctx := context.Background()
 	wr.TopoServer().CreateKeyspace(ctx, "destination_ks", ki)

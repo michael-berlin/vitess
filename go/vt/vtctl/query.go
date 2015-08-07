@@ -18,6 +18,8 @@ import (
 	"github.com/youtube/vitess/go/vt/vtgate/vtgateconn"
 	"github.com/youtube/vitess/go/vt/wrangler"
 	"golang.org/x/net/context"
+
+	pb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
 // This file contains the query command group for vtctl.
@@ -26,6 +28,8 @@ const queriesGroupName = "Queries"
 
 func init() {
 	addCommandGroup(queriesGroupName)
+
+	// VtGate commands
 	addCommand(queriesGroupName, command{
 		"VtGateExecute",
 		commandVtGateExecute,
@@ -41,6 +45,13 @@ func init() {
 		commandVtGateSplitQuery,
 		"-server <vtgate> -keyspace <keyspace> [-split_column <split_column>] -split_count <split_count> [-bind_variables <JSON map>] [-connect_timeout <connect timeout>] <sql>",
 		"Executes the SplitQuery computation for the given SQL query with the provided bound variables against the vtgate server (this is the base query for Map-Reduce workloads, and is provided here for debug / test purposes)."})
+
+	// VtTablet commands
+	addCommand(queriesGroupName, command{
+		"VtTabletExecute",
+		commandVtTabletExecute,
+		"[-bind_variables <JSON map>] [-connect_timeout <connect timeout>] [-transaction_id <transaction_id>] [-tablet_type <tablet_type>] -keyspace <keyspace> -shard <shard> <tablet alias> <sql>",
+		"Executes the given query on the given tablet."})
 	addCommand(queriesGroupName, command{
 		"VtTabletStreamHealth",
 		commandVtTabletStreamHealth,
@@ -182,6 +193,50 @@ func commandVtGateSplitQuery(ctx context.Context, wr *wrangler.Wrangler, subFlag
 	return nil
 }
 
+func commandVtTabletExecute(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
+	transactionID := subFlags.Int("transaction_id", 0, "transaction id to use, if inside a transaction.")
+	bindVariables := newBindvars(subFlags)
+	keyspace := subFlags.String("keyspace", "", "keyspace the tablet belongs to")
+	shard := subFlags.String("shard", "", "shard the tablet belongs to")
+	tabletType := subFlags.String("tablet_type", "unknown", "tablet type we expect from the tablet (use unknown to use sessionId)")
+	connectTimeout := subFlags.Duration("connect_timeout", 30*time.Second, "Connection timeout for vttablet client")
+	if err := subFlags.Parse(args); err != nil {
+		return err
+	}
+	if subFlags.NArg() != 2 {
+		return fmt.Errorf("the <tablet_alis> and <sql> arguments are required for the VtTabletExecute command")
+	}
+	tt, err := parseTabletType3(*tabletType)
+	if err != nil {
+		return err
+	}
+	tabletAlias, err := topo.ParseTabletAliasString(subFlags.Arg(0))
+	if err != nil {
+		return err
+	}
+	tabletInfo, err := wr.TopoServer().GetTablet(ctx, tabletAlias)
+	if err != nil {
+		return err
+	}
+	ep, err := tabletInfo.EndPoint()
+	if err != nil {
+		return fmt.Errorf("cannot get EndPoint from tablet record: %v", err)
+	}
+
+	conn, err := tabletconn.GetDialer()(ctx, ep, *keyspace, *shard, tt, *connectTimeout)
+	if err != nil {
+		return fmt.Errorf("cannot connect to tablet %v: %v", tabletAlias, err)
+	}
+	defer conn.Close()
+
+	qr, err := conn.Execute(ctx, subFlags.Arg(1), *bindVariables, int64(*transactionID))
+	if err != nil {
+		return fmt.Errorf("Execute failed: %v", err)
+	}
+	wr.Logger().Printf("%v\n", jscfg.ToJSON(qr))
+	return nil
+}
+
 func commandVtTabletStreamHealth(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
 	count := subFlags.Int("count", 1, "number of responses to wait for")
 	connectTimeout := subFlags.Duration("connect_timeout", 30*time.Second, "Connection timeout for vttablet client")
@@ -205,8 +260,8 @@ func commandVtTabletStreamHealth(ctx context.Context, wr *wrangler.Wrangler, sub
 		return fmt.Errorf("cannot get EndPoint from tablet record: %v", err)
 	}
 
-	// pass in empty keyspace and shard to not ask for sessionId
-	conn, err := tabletconn.GetDialer()(ctx, *ep, "", "", *connectTimeout)
+	// pass in a non-UNKNOWN tablet type to not use sessionId
+	conn, err := tabletconn.GetDialer()(ctx, ep, "", "", pb.TabletType_MASTER, *connectTimeout)
 	if err != nil {
 		return fmt.Errorf("cannot connect to tablet %v: %v", tabletAlias, err)
 	}
