@@ -16,12 +16,12 @@ import (
 
 // This file uses the sandbox_test framework.
 
-func TestExecuteKeyspaceAlias(t *testing.T) {
-	testVerticalSplitGeneric(t, false, func(shards []string) (*mproto.QueryResult, error) {
-		stc := NewScatterConn(new(sandboxTopo), "", "aa", 1*time.Millisecond, 3, 2*time.Millisecond, 1*time.Millisecond, 24*time.Hour)
-		return stc.Execute(context.Background(), "query", nil, KsTestUnshardedServedFrom, shards, topo.TYPE_RDONLY, nil, false)
-	})
-}
+//func TestExecuteKeyspaceAlias(t *testing.T) {
+//	testVerticalSplitGeneric(t, false, func(shards []string) (*mproto.QueryResult, error) {
+//		stc := NewScatterConn(new(sandboxTopo), "", "aa", 1*time.Millisecond, 3, 2*time.Millisecond, 1*time.Millisecond, 24*time.Hour)
+//		return stc.Execute(context.Background(), "query", nil, KsTestUnshardedServedFrom, shards, topo.TYPE_RDONLY, nil, false)
+//	})
+//}
 
 func TestBatchExecuteKeyspaceAlias(t *testing.T) {
 	testVerticalSplitGeneric(t, false, func(shards []string) (*mproto.QueryResult, error) {
