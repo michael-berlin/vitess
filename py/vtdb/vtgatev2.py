@@ -152,12 +152,15 @@ class VTGateConnection(vtgate_client.VTGateClient):
 
   def begin(self, effective_caller_id=None):
     try:
+      #response = self.client.call('VTGate.Begin', None)   # xxx
+      #self.session = response.reply  # xxxx
+      #self.effective_caller_id = effective_caller_id
+      #return  # xxx
       req = {}
       self._add_caller_id(req, effective_caller_id)
       response = self.client.call('VTGate.Begin2', req)
       self.effective_caller_id = effective_caller_id
-      self.session = None
-      self._update_session(response)
+      self.session = response.reply
     except gorpc.GoRpcError as e:
       raise convert_exception(e, str(self))
 
@@ -166,6 +169,7 @@ class VTGateConnection(vtgate_client.VTGateClient):
       req = {}
       self._add_caller_id(req, self.effective_caller_id)
       self._add_session(req)
+      print 'xxxxx: req[Session] = %s.' % (req['Session'])
       self.client.call('VTGate.Commit2', req)
     except gorpc.GoRpcError as e:
       raise convert_exception(e, str(self))
