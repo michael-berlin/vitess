@@ -1158,8 +1158,8 @@ func commandSetShardServedTypes(ctx context.Context, wr *wrangler.Wrangler, subF
 
 func commandSetShardTabletControl(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
 	cellsStr := subFlags.String("cells", "", "Specifies a comma-separated list of cells to update")
-	tablesStr := subFlags.String("tables", "", "Specifies a comma-separated list of tables to replicate (used for vertical split)")
-	remove := subFlags.Bool("remove", false, "Removes cells for vertical splits. This flag requires the *tables* flag to also be set.")
+	tablesStr := subFlags.String("blacklisted_tables", "", "Specifies a comma-separated list of tables to replicate (used for vertical split)")
+	remove := subFlags.Bool("remove", false, "Removes cells for vertical splits. This flag requires the *blacklisted_tables* flag to also be set.")
 	disableQueryService := subFlags.Bool("disable_query_service", false, "Disables query service on the provided nodes")
 	if err := subFlags.Parse(args); err != nil {
 		return err

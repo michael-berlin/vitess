@@ -103,7 +103,7 @@ func (wr *Wrangler) setShardServedTypes(ctx context.Context, keyspace, shard str
 }
 
 // SetShardTabletControl changes the TabletControl records
-// for a shard.  It does not rebuild any serving graph or do
+// for a shard. It does not rebuild any serving graph or does
 // cross-shard consistency check.
 // - if disableQueryService is set, tables has to be empty
 // - if disableQueryService is not set, and tables is empty, we remove
