@@ -45,5 +45,7 @@ else
 fi
 
 # composer install should be run in every travis build
-cd $HOME/gopath/src/github.com/youtube/vitess
+dir="$(dirname "${BASH_SOURCE[0]}")"
+pushd "${dir}/.."
 composer install
+popd
