@@ -528,8 +528,9 @@ func (scw *SplitCloneWorker) copy(ctx context.Context) error {
 					scw.tableStatus[tableIndex].threadStarted()
 
 					// build the query, and start the streaming
-					selectSQL := buildSQLFromChunks(scw.wr, td, chunks, chunkIndex, scw.sourceAliases[shardIndex].String())
-					qrr, err := NewQueryResultReaderForTablet(ctx, scw.wr.TopoServer(), scw.sourceAliases[shardIndex], selectSQL)
+					sourceAlias := scw.sourceAliases[shardIndex]
+					selectSQL := buildSQLFromChunks(scw.wr, td, chunks, chunkIndex, sourceAlias.String())
+					qrr, err := NewQueryResultReaderForTablet(ctx, scw.wr.TopoServer(), sourceAlias, selectSQL)
 					if err != nil {
 						processError("NewQueryResultReaderForTablet failed: %v", err)
 						return
@@ -538,7 +539,7 @@ func (scw *SplitCloneWorker) copy(ctx context.Context) error {
 
 					// process the data
 					if err := scw.processData(ctx, td, tableIndex, qrr, rowSplitter, insertChannels, scw.destinationPackCount); err != nil {
-						processError("processData failed: %v", err)
+						processError("processData on tablet: %v failed: %v", sourceAlias, err)
 					}
 					scw.tableStatus[tableIndex].threadDone()
 				}(td, tableIndex, chunkIndex)
