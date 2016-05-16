@@ -182,8 +182,11 @@ type TabletManagerClient interface {
 	// Backup / restore related methods
 	//
 
-	// Backup creates a database backup
+	// Backup creates a database backup.
 	Backup(ctx context.Context, tablet *topo.TabletInfo, concurrency int) (logutil.EventStream, error)
+
+	// Restore restores a database backup.
+	//	Restore(ctx context.Context, tablet *topo.TabletInfo, concurrency int) (logutil.EventStream, error)
 
 	//
 	// RPC related methods

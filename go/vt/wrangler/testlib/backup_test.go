@@ -121,7 +121,7 @@ func TestBackupRestore(t *testing.T) {
 			Sequence: 457,
 		},
 	}
-	destTablet.FakeMysqlDaemon.ExpectedExecuteSuperQueryList = []string{
+	sourceTablet.FakeMysqlDaemon.ExpectedExecuteSuperQueryList = []string{
 		"cmd1",
 		"set master cmd 1",
 		"START SLAVE",
@@ -135,18 +135,22 @@ func TestBackupRestore(t *testing.T) {
 		RelayLogIndexPath:     path.Join(root, "relay-log.index"),
 		RelayLogInfoPath:      path.Join(root, "relay-log.info"),
 	}
-	destTablet.FakeMysqlDaemon.FetchSuperQueryMap = map[string]*sqltypes.Result{
+	sourceTablet.FakeMysqlDaemon.Mycnf.BinLogPath = path.Join(root, "bin-logs/filename_prefix")
+	sourceTablet.FakeMysqlDaemon.Mycnf.RelayLogPath = path.Join(root, "relay-logs/filename_prefix")
+	sourceTablet.FakeMysqlDaemon.Mycnf.RelayLogIndexPath = path.Join(root, "relay-log.index")
+	sourceTablet.FakeMysqlDaemon.Mycnf.RelayLogInfoPath = path.Join(root, "relay-log.info")
+	sourceTablet.FakeMysqlDaemon.FetchSuperQueryMap = map[string]*sqltypes.Result{
 		"SHOW DATABASES": {},
 	}
-	destTablet.FakeMysqlDaemon.SetSlavePositionCommandsPos = sourceTablet.FakeMysqlDaemon.CurrentMasterPosition
-	destTablet.FakeMysqlDaemon.SetSlavePositionCommandsResult = []string{"cmd1"}
+	sourceTablet.FakeMysqlDaemon.SetSlavePositionCommandsPos = sourceTablet.FakeMysqlDaemon.CurrentMasterPosition
+	sourceTablet.FakeMysqlDaemon.SetSlavePositionCommandsResult = []string{"cmd1"}
 	destTablet.FakeMysqlDaemon.SetMasterCommandsInput = fmt.Sprintf("%v:%v", master.Tablet.Hostname, master.Tablet.PortMap["mysql"])
 	destTablet.FakeMysqlDaemon.SetMasterCommandsResult = []string{"set master cmd 1"}
 
 	destTablet.StartActionLoop(t, wr)
 	defer destTablet.StopActionLoop(t)
 
-	if err := destTablet.Agent.RestoreFromBackup(ctx); err != nil {
+	if err := sourceTablet.Agent.RestoreFromBackup(ctx); err != nil {
 		t.Fatalf("RestoreFromBackup failed: %v", err)
 	}
 
