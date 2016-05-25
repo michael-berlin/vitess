@@ -68,18 +68,18 @@ type Throttler struct {
 	// rateUpdateChan is used to notify the throttler that the current max rate
 	// must be recalculated and updated.
 	rateUpdateChan chan struct{}
+	// maxReplicationLagModule is stored in its own field because we need it to
+	// record the replication lag. It's also included in the "modules" list.
+	maxReplicationLagModule *MaxReplicationLagModule
 
 	// The group below is unguarded because the fields are immutable and each
 	// thread accesses an element at a different index.
 	threadThrottlers []*threadThrottler
 	threadFinished   []bool
 
-	nowFunc func() time.Time
-
 	// The group below is unguarded because it's only accessed by the update Go
 	// routine which reads the rateUpdateChan channel.
-	maxRate          int64
-	maxRatePerThread int64
+	lastMaxRate int64
 
 	mu sync.Mutex
 	// runningThreads tracks which threads have not finished yet.
@@ -87,6 +87,12 @@ type Throttler struct {
 	// threadRunningsLastUpdate caches for updateMaxRate() how many threads were
 	// running at the previous run.
 	threadRunningsLastUpdate int
+
+	nowFunc func() time.Time
+
+	// actualRateHistory tracks for past seconds the total actual rate (based on
+	// the number of unthrottled Throttle() calls).
+	actualRateHistory aggregatedHistory
 }
 
 // NewThrottler creates a new Throttler instance.
@@ -118,9 +124,15 @@ func newThrottler(name, unit string, threadCount int, maxRate int64, maxReplicat
 	}
 
 	// Enable the configured modules.
+	actualRateHistory := newAggregatedIntervalHistory(1024, 1*time.Second, threadCount)
+	maxReplicationLagModule, err := NewMaxReplicationLagModule(NewMaxReplicationLagModuleConfig(maxReplicationLag), actualRateHistory, nowFunc)
+	if err != nil {
+		return nil, err
+	}
+
 	var modules []Module
+	modules = append(modules, maxReplicationLagModule)
 	modules = append(modules, NewMaxRateModule(maxRate))
-	// TODO(mberlin): Append ReplicationLagModule once it's implemented.
 
 	// Start each module (which might start own Go routines).
 	rateUpdateChan := make(chan struct{}, 10)
@@ -131,18 +143,20 @@ func newThrottler(name, unit string, threadCount int, maxRate int64, maxReplicat
 	runningThreads := make(map[int]bool, threadCount)
 	threadThrottlers := make([]*threadThrottler, threadCount, threadCount)
 	for i := 0; i < threadCount; i++ {
-		threadThrottlers[i] = newThreadThrottler(i)
+		threadThrottlers[i] = newThreadThrottler(i, actualRateHistory)
 		runningThreads[i] = true
 	}
 	t := &Throttler{
-		name:             name,
-		unit:             unit,
-		modules:          modules,
-		rateUpdateChan:   rateUpdateChan,
-		threadThrottlers: threadThrottlers,
-		threadFinished:   make([]bool, threadCount, threadCount),
-		runningThreads:   runningThreads,
-		nowFunc:          nowFunc,
+		name:                    name,
+		unit:                    unit,
+		modules:                 modules,
+		maxReplicationLagModule: maxReplicationLagModule,
+		rateUpdateChan:          rateUpdateChan,
+		threadThrottlers:        threadThrottlers,
+		threadFinished:          make([]bool, threadCount, threadCount),
+		runningThreads:          runningThreads,
+		nowFunc:                 nowFunc,
+		actualRateHistory:       actualRateHistory,
 	}
 
 	// Initialize maxRate.
@@ -209,12 +223,14 @@ func (t *Throttler) updateMaxRate() {
 	// Set it to infinite initially.
 	maxRate := int64(math.MaxInt64)
 
-	// Find out the new max rate.
+	// Find out the new max rate (minimum among all modules).
 	for _, m := range t.modules {
 		if moduleMaxRate := m.MaxRate(); moduleMaxRate < maxRate {
 			maxRate = moduleMaxRate
 		}
 	}
+
+	log.Infof("updating maxRate to: %v", maxRate)
 
 	// Set the new max rate on each thread.
 	t.mu.Lock()
@@ -224,7 +240,7 @@ func (t *Throttler) updateMaxRate() {
 		// Throttler is done. Set rates don't matter anymore.
 		return
 	}
-	if maxRate == t.maxRate && threadsRunning == t.threadRunningsLastUpdate {
+	if maxRate == t.lastMaxRate && threadsRunning == t.threadRunningsLastUpdate {
 		// Rate for each thread is unchanged.
 		return
 	}
@@ -247,5 +263,10 @@ func (t *Throttler) updateMaxRate() {
 		t.threadThrottlers[threadID].setMaxRate(
 			maxRatePerThread + remainderPerThread[threadID])
 	}
+	t.lastMaxRate = maxRate
 	t.threadRunningsLastUpdate = threadsRunning
+}
+
+func (t *Throttler) RecordReplicationLag(lag int64, time time.Time) {
+	t.maxReplicationLagModule.RecordReplicationLag(lag, time)
 }

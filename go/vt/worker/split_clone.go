@@ -58,7 +58,8 @@ type SplitCloneWorker struct {
 	// populated during WorkerStateFindTargets, read-only after that
 	sourceAliases []*topodatapb.TabletAlias
 	sourceTablets []*topo.TabletInfo
-	// healthCheck tracks the health of all MASTER and REPLICA tablets.
+	// healthCheck is used to a) find out the current MASTER tablet and b)
+	// track the replication lag of all MASTER and REPLICA tablets.
 	// It must be closed at the end of the command.
 	healthCheck discovery.HealthCheck
 	// destinationShardWatchers contains a TopologyWatcher for each destination
@@ -206,18 +207,22 @@ func (scw *SplitCloneWorker) Run(ctx context.Context) error {
 		}
 	}
 
-	// Stop Throttlers.
-	for _, throttler := range scw.destinationThrottlers {
-		throttler.Close()
-	}
-	// Stop healthcheck.
+	// Stop watchers to prevent new tablets from getting added to the healthCheck.
 	for _, watcher := range scw.destinationShardWatchers {
 		watcher.Stop()
 	}
+	// Stop healthCheck to make sure it stops calling our listener implementation.
 	if scw.healthCheck != nil {
+		// After Close returned, we can be sure that it won't call our listener
+		// implementation (method StatsUpdate) anymore.
 		if err := scw.healthCheck.Close(); err != nil {
 			scw.wr.Logger().Errorf("HealthCheck.Close() failed: %v", err)
 		}
+	}
+	// Stop Throttlers (which will no longer be used by our healthcheck listener
+	// implementation because healthCheck is stopped.)
+	for _, throttler := range scw.destinationThrottlers {
+		throttler.Close()
 	}
 
 	if err != nil {
@@ -357,8 +362,26 @@ func (scw *SplitCloneWorker) findTargets(ctx context.Context) error {
 		wrangler.RecordStartSlaveAction(scw.cleaner, scw.sourceTablets[i].Tablet)
 	}
 
-	// Initialize healthcheck and add destination shards to it.
+	// a) Set up the throttler for each destination shard.
+	for _, si := range scw.destinationShards {
+		keyspaceAndShard := topoproto.KeyspaceShardString(si.Keyspace(), si.ShardName())
+		t, err := throttler.NewThrottler(
+			keyspaceAndShard, "transactions", scw.destinationWriterCount, scw.maxTPS, throttler.ReplicationLagModuleDisabled)
+		if err != nil {
+			return fmt.Errorf("cannot instantiate throttler: %v", err)
+		}
+		scw.destinationThrottlers[keyspaceAndShard] = t
+	}
+
+	// b) Initialize healthcheck.
 	scw.healthCheck = discovery.NewHealthCheck(*remoteActionsTimeout, *healthcheckRetryDelay, *healthCheckTimeout, "" /* statsSuffix */)
+
+	// c) Set the healthcheck listener to us (method StatsUpdate).
+	//    It which will reference the throttlers.
+	scw.healthCheck.SetListener(scw)
+
+	// d) Add destination shards to the healthcheck (must happen after setting the
+	// listener).
 	for _, si := range scw.destinationShards {
 		watcher := discovery.NewShardReplicationWatcher(scw.wr.TopoServer(), scw.healthCheck,
 			scw.cell, si.Keyspace(), si.ShardName(),
@@ -391,24 +414,13 @@ func (scw *SplitCloneWorker) findTargets(ctx context.Context) error {
 		}
 		keyspaceAndShard := topoproto.KeyspaceShardString(si.Keyspace(), si.ShardName())
 		scw.destinationDbNames[keyspaceAndShard] = ti.DbName()
-		
+
 		// TODO(mberlin): Verify on the destination master that the
 		// _vt.blp_checkpoint table has the latest schema.
 
 		scw.wr.Logger().Infof("Using tablet %v as destination master for %v/%v", topoproto.TabletAliasString(master.Tablet.Alias), si.Keyspace(), si.ShardName())
 	}
 	scw.wr.Logger().Infof("NOTE: The used master of a destination shard might change over the course of the copy e.g. due to a reparent. The HealthCheck module will track and log master changes and any error message will always refer the actually used master address.")
-
-	// Set up the throttler for each destination shard.
-	for _, si := range scw.destinationShards {
-		keyspaceAndShard := topoproto.KeyspaceShardString(si.Keyspace(), si.ShardName())
-		t, err := throttler.NewThrottler(
-			keyspaceAndShard, "transactions", scw.destinationWriterCount, scw.maxTPS, throttler.ReplicationLagModuleDisabled)
-		if err != nil {
-			return fmt.Errorf("cannot instantiate throttler: %v", err)
-		}
-		scw.destinationThrottlers[keyspaceAndShard] = t
-	}
 
 	return nil
 }
@@ -718,4 +730,20 @@ func (scw *SplitCloneWorker) processData(ctx context.Context, td *tabletmanagerd
 		sr = rowSplitter.StartSplit()
 		packCount = 0
 	}
+}
+
+// StatsUpdate receives replication lag updates for each destination master
+// and forwards them to the respective throttler instance.
+// It is part of the discovery.HealthCheckStatsListener interface.
+func (scw *SplitCloneWorker) StatsUpdate(ts *discovery.TabletStats) {
+	// Ignore if not MASTER or REPLICA.
+	if ts.Target.TabletType != topodatapb.TabletType_MASTER &&
+		ts.Target.TabletType != topodatapb.TabletType_REPLICA {
+		return
+	}
+
+	keyspaceAndShard := topoproto.KeyspaceShardString(ts.Target.Keyspace, ts.Target.Shard)
+	t := scw.destinationThrottlers[keyspaceAndShard]
+	// TODO(mberlin): Should we track from which replica the lag came as well?
+	t.RecordReplicationLag(int64(ts.Stats.SecondsBehindMaster), time.Now())
 }

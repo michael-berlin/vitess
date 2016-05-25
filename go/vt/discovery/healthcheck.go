@@ -208,6 +208,7 @@ func (hc *HealthCheckImpl) checkConn(hcc *healthCheckConn, cell, name string, ta
 	// retry health check if it fails
 	for {
 		stream, err := hcc.connect(hc, tablet)
+		//		log.Info("connected to: %v stream: %v err: %v", tablet, stream, err)
 		if err != nil {
 			select {
 			case <-hcc.ctx.Done():
@@ -225,6 +226,7 @@ func (hc *HealthCheckImpl) checkConn(hcc *healthCheckConn, cell, name string, ta
 		}
 		for {
 			reconnect, err := hcc.processResponse(hc, tablet, stream)
+			//			log.Info("recv: %v reconnect: %v err: %v", hcc, reconnect, err)
 			if err != nil {
 				hcc.mu.Lock()
 				hcc.serving = false
