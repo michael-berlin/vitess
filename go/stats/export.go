@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package stats is a wrapper for expvar. It addtionally
+// Package stats is a wrapper for expvar. It additionally
 // exports new types that can be used to track performance.
 // It also provides a callback hook that allows a program
 // to export the variables using methods other than /debug/vars.
