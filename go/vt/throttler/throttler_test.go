@@ -5,11 +5,22 @@
 package throttler
 
 import (
+	"flag"
+	"fmt"
+	"net/http"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+var port = flag.Int("throttler_benchmark_port", 8080, "port for the webserver which shows the throttler page during the benchmark")
+
+func init() {
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", *port), nil); err != nil {
+		panic(fmt.Sprintf("failed to start the benchmark webserver: %v", err))
+	}
+}
 
 // The main purpose of the benchmarks below is to demonstrate the functionality
 // of the throttler in the real-world (using a non-faked time.Now).
@@ -29,6 +40,12 @@ import (
 // BenchmarkThrottlerParallel_100kQPS-4	 5000000	      9999 ns/op
 // BenchmarkThrottlerDisabled-4	500000000	        94.9 ns/op
 // ok  	github.com/youtube/vitess/go/vt/throttler	448.282
+//
+// Additionally, the benchmarks can also be used to verify the /throttler
+// status page which shows graphs of the actual throttler rate.
+// Run the following command to run a single benchmark for a long time:
+// $ go test -run=XXX -bench=BenchmarkThrottler_10kQPS --benchtime=300s
+// Then browse http://localhost:8080/throttler to view the graphs.
 
 func BenchmarkThrottler_1kQPS(b *testing.B) {
 	benchmarkThrottler(b, 1*1000)
