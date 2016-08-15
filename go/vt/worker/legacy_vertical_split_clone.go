@@ -30,9 +30,9 @@ import (
 	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
 )
 
-// VerticalSplitCloneWorker will clone the data from a source keyspace/shard
+// LegacyVerticalSplitCloneWorker will clone the data from a source keyspace/shard
 // to a destination keyspace/shard.
-type VerticalSplitCloneWorker struct {
+type LegacyVerticalSplitCloneWorker struct {
 	StatusWorker
 
 	wr                      *wrangler.Wrangler
@@ -80,8 +80,8 @@ type VerticalSplitCloneWorker struct {
 	ev *events.VerticalSplitClone
 }
 
-// NewVerticalSplitCloneWorker returns a new VerticalSplitCloneWorker object.
-func NewVerticalSplitCloneWorker(wr *wrangler.Wrangler, cell, destinationKeyspace, destinationShard string, tables []string, strategyStr string, sourceReaderCount, destinationPackCount int, minTableSizeForSplit uint64, destinationWriterCount, minHealthyRdonlyTablets int, maxTPS int64) (Worker, error) {
+// NewLegacyVerticalSplitCloneWorker returns a new LegacyVerticalSplitCloneWorker object.
+func NewLegacyVerticalSplitCloneWorker(wr *wrangler.Wrangler, cell, destinationKeyspace, destinationShard string, tables []string, strategyStr string, sourceReaderCount, destinationPackCount int, minTableSizeForSplit uint64, destinationWriterCount, minHealthyRdonlyTablets int, maxTPS int64) (Worker, error) {
 	if len(tables) == 0 {
 		return nil, errors.New("list of tablets to be split out must not be empty")
 	}
@@ -95,7 +95,7 @@ func NewVerticalSplitCloneWorker(wr *wrangler.Wrangler, cell, destinationKeyspac
 	if maxTPS != throttler.MaxRateModuleDisabled && maxTPS < int64(destinationWriterCount) {
 		return nil, fmt.Errorf("-max_tps must be >= -destination_writer_count: %v >= %v", maxTPS, destinationWriterCount)
 	}
-	return &VerticalSplitCloneWorker{
+	return &LegacyVerticalSplitCloneWorker{
 		StatusWorker:            NewStatusWorker(),
 		wr:                      wr,
 		cell:                    cell,
@@ -123,18 +123,18 @@ func NewVerticalSplitCloneWorker(wr *wrangler.Wrangler, cell, destinationKeyspac
 	}, nil
 }
 
-func (vscw *VerticalSplitCloneWorker) setState(state StatusWorkerState) {
+func (vscw *LegacyVerticalSplitCloneWorker) setState(state StatusWorkerState) {
 	vscw.SetState(state)
 	event.DispatchUpdate(vscw.ev, state.String())
 }
 
-func (vscw *VerticalSplitCloneWorker) setErrorState(err error) {
+func (vscw *LegacyVerticalSplitCloneWorker) setErrorState(err error) {
 	vscw.SetState(WorkerStateError)
 	event.DispatchUpdate(vscw.ev, "error: "+err.Error())
 }
 
 // StatusAsHTML implements the Worker interface
-func (vscw *VerticalSplitCloneWorker) StatusAsHTML() template.HTML {
+func (vscw *LegacyVerticalSplitCloneWorker) StatusAsHTML() template.HTML {
 	state := vscw.State()
 
 	result := "<b>Working on:</b> " + vscw.destinationKeyspace + "/" + vscw.destinationShard + "</br>\n"
@@ -156,7 +156,7 @@ func (vscw *VerticalSplitCloneWorker) StatusAsHTML() template.HTML {
 }
 
 // StatusAsText implements the Worker interface
-func (vscw *VerticalSplitCloneWorker) StatusAsText() string {
+func (vscw *LegacyVerticalSplitCloneWorker) StatusAsText() string {
 	state := vscw.State()
 
 	result := "Working on: " + vscw.destinationKeyspace + "/" + vscw.destinationShard + "\n"
@@ -177,7 +177,7 @@ func (vscw *VerticalSplitCloneWorker) StatusAsText() string {
 }
 
 // Run implements the Worker interface
-func (vscw *VerticalSplitCloneWorker) Run(ctx context.Context) error {
+func (vscw *LegacyVerticalSplitCloneWorker) Run(ctx context.Context) error {
 	resetVars()
 
 	// Run the command.
@@ -213,7 +213,7 @@ func (vscw *VerticalSplitCloneWorker) Run(ctx context.Context) error {
 	return nil
 }
 
-func (vscw *VerticalSplitCloneWorker) run(ctx context.Context) error {
+func (vscw *LegacyVerticalSplitCloneWorker) run(ctx context.Context) error {
 	// first state: read what we need to do
 	if err := vscw.init(ctx); err != nil {
 		return fmt.Errorf("init() failed: %v", err)
@@ -243,7 +243,7 @@ func (vscw *VerticalSplitCloneWorker) run(ctx context.Context) error {
 
 // init phase:
 // - read the destination keyspace, make sure it has 'servedFrom' values
-func (vscw *VerticalSplitCloneWorker) init(ctx context.Context) error {
+func (vscw *LegacyVerticalSplitCloneWorker) init(ctx context.Context) error {
 	vscw.setState(WorkerStateInit)
 
 	// read the keyspace and validate it
@@ -290,7 +290,7 @@ func (vscw *VerticalSplitCloneWorker) init(ctx context.Context) error {
 // - find one rdonly in the source shard
 // - mark it as 'worker' pointing back to us
 // - get the aliases of all the targets
-func (vscw *VerticalSplitCloneWorker) findTargets(ctx context.Context) error {
+func (vscw *LegacyVerticalSplitCloneWorker) findTargets(ctx context.Context) error {
 	vscw.setState(WorkerStateFindTargets)
 
 	// find an appropriate tablet in the source shard
@@ -357,7 +357,7 @@ func (vscw *VerticalSplitCloneWorker) findTargets(ctx context.Context) error {
 // Find all tablets on the destination shard. This should be done immediately before refreshing
 // the state on these tablets, to minimize the chances of the topo changing in between.
 
-func (vscw *VerticalSplitCloneWorker) findRefreshTargets(ctx context.Context) error {
+func (vscw *LegacyVerticalSplitCloneWorker) findRefreshTargets(ctx context.Context) error {
 	refreshAliases, refreshTablets, err := resolveRefreshTabletsForShard(ctx, vscw.destinationKeyspace, vscw.destinationShard, vscw.wr)
 	if err != nil {
 		return err
@@ -370,7 +370,7 @@ func (vscw *VerticalSplitCloneWorker) findRefreshTargets(ctx context.Context) er
 //	- copy the data from source tablets to destination masters (with replication on)
 // Assumes that the schema has already been created on each destination tablet
 // (probably from vtctl's CopySchemaShard)
-func (vscw *VerticalSplitCloneWorker) clone(ctx context.Context) error {
+func (vscw *LegacyVerticalSplitCloneWorker) clone(ctx context.Context) error {
 	vscw.setState(WorkerStateCloneOffline)
 	start := time.Now()
 	defer func() {
@@ -555,7 +555,7 @@ func (vscw *VerticalSplitCloneWorker) clone(ctx context.Context) error {
 
 // processData pumps the data out of the provided QueryResultReader.
 // It returns any error the source encounters.
-func (vscw *VerticalSplitCloneWorker) processData(ctx context.Context, dbName string, td *tabletmanagerdatapb.TableDefinition, tableIndex int, rr ResultReader, insertChannel chan string, destinationPackCount int) error {
+func (vscw *LegacyVerticalSplitCloneWorker) processData(ctx context.Context, dbName string, td *tabletmanagerdatapb.TableDefinition, tableIndex int, rr ResultReader, insertChannel chan string, destinationPackCount int) error {
 	// process the data
 	baseCmd := "INSERT INTO " + escape(dbName) + "." + escape(td.Name) + "(" + strings.Join(escapeAll(td.Columns), ", ") + ") VALUES "
 	var rows [][]sqltypes.Value

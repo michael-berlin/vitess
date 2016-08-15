@@ -398,7 +398,7 @@ index by_msg (msg)
 
     utils.run_vtworker(['--cell', 'test_nj',
                         '--command_display_interval', '10ms',
-                        'VerticalSplitClone',
+                        'LegacyVerticalSplitClone',
                         '--tables', 'moving.*,view1',
                         '--min_table_size_for_split', '1',
                         '--min_healthy_rdonly_tablets', '1',

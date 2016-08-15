@@ -19,7 +19,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-const verticalSplitCloneHTML = `
+const legacyVerticalSplitCloneHTML = `
 <!DOCTYPE html>
 <head>
   <title>Vertical Split Clone Action</title>
@@ -33,14 +33,14 @@ const verticalSplitCloneHTML = `
       <p>Choose the destination keyspace for this action.</p>
       <ul>
       {{range $i, $si := .Keyspaces}}
-        <li><a href="/Clones/VerticalSplitClone?keyspace={{$si}}">{{$si}}</a></li>
+        <li><a href="/Clones/LegacyVerticalSplitClone?keyspace={{$si}}">{{$si}}</a></li>
       {{end}}
       </ul>
     {{end}}
 </body>
 `
 
-const verticalSplitCloneHTML2 = `
+const legacyVerticalSplitCloneHTML2 = `
 <!DOCTYPE html>
 <head>
   <title>Vertical Split Clone Action</title>
@@ -48,7 +48,7 @@ const verticalSplitCloneHTML2 = `
 <body>
   <p>Destination keyspace: {{.Keyspace}}</p>
   <h1>Vertical Split Clone Action</h1>
-    <form action="/Clones/VerticalSplitClone" method="post">
+    <form action="/Clones/LegacyVerticalSplitClone" method="post">
       <LABEL for="tables">Tables: </LABEL>
         <INPUT type="text" id="tables" name="tables" value="moving.*"></BR>
       <LABEL for="strategy">Strategy: </LABEL>
@@ -79,12 +79,12 @@ const verticalSplitCloneHTML2 = `
   </body>
 `
 
-var verticalSplitCloneTemplate = mustParseTemplate("verticalSplitClone", verticalSplitCloneHTML)
-var verticalSplitCloneTemplate2 = mustParseTemplate("verticalSplitClone2", verticalSplitCloneHTML2)
+var legacyVerticalSplitCloneTemplate = mustParseTemplate("legacyVerticalSplitClone", legacyVerticalSplitCloneHTML)
+var legacyVerticalSplitCloneTemplate2 = mustParseTemplate("legacyVerticalSplitClone2", legacyVerticalSplitCloneHTML2)
 
-func commandVerticalSplitClone(wi *Instance, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) (Worker, error) {
+func commandLegacyVerticalSplitClone(wi *Instance, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) (Worker, error) {
 	tables := subFlags.String("tables", "", "comma separated list of tables to replicate (used for vertical split)")
-	strategy := subFlags.String("strategy", "", "which strategy to use for restore, use 'vtworker VerticalSplitClone --strategy=-help k/s' for more info")
+	strategy := subFlags.String("strategy", "", "which strategy to use for restore, use 'vtworker LegacyVerticalSplitClone --strategy=-help k/s' for more info")
 	sourceReaderCount := subFlags.Int("source_reader_count", defaultSourceReaderCount, "number of concurrent streaming queries to use on the source")
 	destinationPackCount := subFlags.Int("destination_pack_count", defaultDestinationPackCount, "number of packets to pack in one destination insert")
 	minTableSizeForSplit := subFlags.Int("min_table_size_for_split", defaultMinTableSizeForSplit, "tables bigger than this size on disk in bytes will be split into source_reader_count chunks if possible")
@@ -96,7 +96,7 @@ func commandVerticalSplitClone(wi *Instance, wr *wrangler.Wrangler, subFlags *fl
 	}
 	if subFlags.NArg() != 1 {
 		subFlags.Usage()
-		return nil, fmt.Errorf("command VerticalSplitClone requires <destination keyspace/shard>")
+		return nil, fmt.Errorf("command LegacyVerticalSplitClone requires <destination keyspace/shard>")
 	}
 
 	keyspace, shard, err := topoproto.ParseKeyspaceShard(subFlags.Arg(0))
@@ -107,7 +107,7 @@ func commandVerticalSplitClone(wi *Instance, wr *wrangler.Wrangler, subFlags *fl
 	if *tables != "" {
 		tableArray = strings.Split(*tables, ",")
 	}
-	worker, err := NewVerticalSplitCloneWorker(wr, wi.cell, keyspace, shard, tableArray, *strategy, *sourceReaderCount, *destinationPackCount, uint64(*minTableSizeForSplit), *destinationWriterCount, *minHealthyRdonlyTablets, *maxTPS)
+	worker, err := NewLegacyVerticalSplitCloneWorker(wr, wi.cell, keyspace, shard, tableArray, *strategy, *sourceReaderCount, *destinationPackCount, uint64(*minTableSizeForSplit), *destinationWriterCount, *minHealthyRdonlyTablets, *maxTPS)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create worker: %v", err)
 	}
@@ -157,7 +157,7 @@ func keyspacesWithServedFrom(ctx context.Context, wr *wrangler.Wrangler) ([]stri
 	return result, nil
 }
 
-func interactiveVerticalSplitClone(ctx context.Context, wi *Instance, wr *wrangler.Wrangler, w http.ResponseWriter, r *http.Request) (Worker, *template.Template, map[string]interface{}, error) {
+func interactiveLegacyVerticalSplitClone(ctx context.Context, wi *Instance, wr *wrangler.Wrangler, w http.ResponseWriter, r *http.Request) (Worker, *template.Template, map[string]interface{}, error) {
 	if err := r.ParseForm(); err != nil {
 		return nil, nil, nil, fmt.Errorf("cannot parse form: %s", err)
 	}
@@ -172,7 +172,7 @@ func interactiveVerticalSplitClone(ctx context.Context, wi *Instance, wr *wrangl
 		} else {
 			result["Keyspaces"] = keyspaces
 		}
-		return nil, verticalSplitCloneTemplate, result, nil
+		return nil, legacyVerticalSplitCloneTemplate, result, nil
 	}
 
 	tables := r.FormValue("tables")
@@ -186,7 +186,7 @@ func interactiveVerticalSplitClone(ctx context.Context, wi *Instance, wr *wrangl
 		result["DefaultDestinationWriterCount"] = fmt.Sprintf("%v", defaultDestinationWriterCount)
 		result["DefaultMinHealthyRdonlyTablets"] = fmt.Sprintf("%v", defaultMinHealthyRdonlyTablets)
 		result["DefaultMaxTPS"] = fmt.Sprintf("%v", defaultMaxTPS)
-		return nil, verticalSplitCloneTemplate2, result, nil
+		return nil, legacyVerticalSplitCloneTemplate2, result, nil
 	}
 	tableArray := strings.Split(tables, ",")
 
@@ -224,7 +224,7 @@ func interactiveVerticalSplitClone(ctx context.Context, wi *Instance, wr *wrangl
 	}
 
 	// start the clone job
-	wrk, err := NewVerticalSplitCloneWorker(wr, wi.cell, keyspace, "0", tableArray, strategy, int(sourceReaderCount), int(destinationPackCount), uint64(minTableSizeForSplit), int(destinationWriterCount), int(minHealthyRdonlyTablets), maxTPS)
+	wrk, err := NewLegacyVerticalSplitCloneWorker(wr, wi.cell, keyspace, "0", tableArray, strategy, int(sourceReaderCount), int(destinationPackCount), uint64(minTableSizeForSplit), int(destinationWriterCount), int(minHealthyRdonlyTablets), maxTPS)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("cannot create worker: %v", err)
 	}
@@ -232,8 +232,8 @@ func interactiveVerticalSplitClone(ctx context.Context, wi *Instance, wr *wrangl
 }
 
 func init() {
-	AddCommand("Clones", Command{"VerticalSplitClone",
-		commandVerticalSplitClone, interactiveVerticalSplitClone,
+	AddCommand("Clones", Command{"LegacyVerticalSplitClone",
+		commandLegacyVerticalSplitClone, interactiveLegacyVerticalSplitClone,
 		"[--tables=''] [--strategy=''] <destination keyspace/shard>",
 		"Replicates the data and creates configuration for a vertical split."})
 }

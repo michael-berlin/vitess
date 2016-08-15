@@ -27,10 +27,10 @@ import (
 )
 
 const (
-	// verticalSplitCloneTestMin is the minimum value of the primary key.
-	verticalSplitCloneTestMin int = 100
-	// verticalSplitCloneTestMax is the maximum value of the primary key.
-	verticalSplitCloneTestMax int = 200
+	// legacyLegacyVerticalSplitCloneTestMin is the minimum value of the primary key.
+	legacyLegacyVerticalSplitCloneTestMin int = 100
+	// legacyLegacyVerticalSplitCloneTestMax is the maximum value of the primary key.
+	legacyLegacyVerticalSplitCloneTestMax int = 200
 )
 
 // verticalTabletServer is a local QueryService implementation to support the tests.
@@ -42,8 +42,8 @@ type verticalTabletServer struct {
 
 func (sq *verticalTabletServer) StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, sendReply func(reply *sqltypes.Result) error) error {
 	// Custom parsing of the query we expect
-	min := verticalSplitCloneTestMin
-	max := verticalSplitCloneTestMax
+	min := legacyLegacyVerticalSplitCloneTestMin
+	max := legacyLegacyVerticalSplitCloneTestMax
 	var err error
 	parts := strings.Split(sql, " ")
 	for _, part := range parts {
@@ -90,7 +90,7 @@ func (sq *verticalTabletServer) StreamExecute(ctx context.Context, target *query
 	return nil
 }
 
-func createVerticalSplitCloneDestinationFakeDb(t *testing.T, name string, insertCount int) *FakePoolConnection {
+func createLegacyVerticalSplitCloneDestinationFakeDb(t *testing.T, name string, insertCount int) *FakePoolConnection {
 	f := NewFakePoolConnectionQuery(t, name)
 
 	// Provoke a retry to test the error handling. (Let the first write fail.)
@@ -105,7 +105,7 @@ func createVerticalSplitCloneDestinationFakeDb(t *testing.T, name string, insert
 	return f
 }
 
-func TestVerticalSplitClone(t *testing.T) {
+func TestLegacyVerticalSplitClone(t *testing.T) {
 	db := fakesqldb.Register()
 	ts := zktestserver.New(t, []string{"cell1", "cell2"})
 	ctx := context.Background()
@@ -174,7 +174,7 @@ func TestVerticalSplitClone(t *testing.T) {
 			},
 		}
 		sourceRdonly.FakeMysqlDaemon.DbAppConnectionFactory = sourceRdonlyFactory(
-			t, "vt_source_ks", "moving1", verticalSplitCloneTestMin, verticalSplitCloneTestMax)
+			t, "vt_source_ks", "moving1", legacyLegacyVerticalSplitCloneTestMin, legacyLegacyVerticalSplitCloneTestMax)
 		sourceRdonly.FakeMysqlDaemon.CurrentMasterPosition = replication.Position{
 			GTIDSet: replication.MariadbGTID{Domain: 12, Server: 34, Sequence: 5678},
 		}
@@ -196,7 +196,7 @@ func TestVerticalSplitClone(t *testing.T) {
 	// at once. So we'll process 4 + 4 + 2 rows to get to 10.
 	// That means 3 insert statements on the target. So 3 * 10
 	// = 30 insert statements on the destination.
-	destMasterFakeDb := createVerticalSplitCloneDestinationFakeDb(t, "destMaster", 30)
+	destMasterFakeDb := createLegacyVerticalSplitCloneDestinationFakeDb(t, "destMaster", 30)
 	defer destMasterFakeDb.verifyAllExecutedOrFail()
 	destMaster.FakeMysqlDaemon.DbAppConnectionFactory = destMasterFakeDb.getFactory()
 
@@ -209,7 +209,7 @@ func TestVerticalSplitClone(t *testing.T) {
 
 	// Run the vtworker command.
 	args := []string{
-		"VerticalSplitClone",
+		"LegacyVerticalSplitClone",
 		// --max_tps is only specified to enable the throttler and ensure that the
 		// code is executed. But the intent here is not to throttle the test, hence
 		// the rate limit is set very high.
