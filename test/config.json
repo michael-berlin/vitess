@@ -335,8 +335,8 @@
 			"RetryMax": 0,
 			"Tags": []
 		},
-		"vertical_split": {
-			"File": "vertical_split.py",
+		"legacy_vertical_split": {
+			"File": "legacy_vertical_split.py",
 			"Args": [],
 			"Command": [],
 			"Manual": false,
