@@ -305,8 +305,8 @@ func (bpc *BinlogPlayerController) Iteration() (err error) {
 
 	// Find the server list from the health check.
 	// Note: We cannot use tsc.GetHealthyTabletStats() here because it does
-	// not return non-serving tablets. However, we might replicate from
-	// these as well.
+	// not return non-serving tablets. However, the source REPLICA tablets may not
+	// be serving (anymore) because we already migrated them.
 	addrs := discovery.RemoveUnhealthyTablets(bpc.tabletStatsCache.GetTabletStats(bpc.sourceShard.Keyspace, bpc.sourceShard.Shard, topodatapb.TabletType_REPLICA))
 	if len(addrs) == 0 {
 		return fmt.Errorf("can't find any healthy source tablet for %v %v %v", bpc.cell, bpc.sourceShard.String(), topodatapb.TabletType_REPLICA)
