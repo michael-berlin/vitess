@@ -199,6 +199,7 @@ func (tc *splitCloneTestCase) setUpWithConcurreny(v3 bool, concurrency, writeQue
 		}
 		shqs := fakes.NewStreamHealthQueryService(sourceRdonly.Target())
 		shqs.AddDefaultHealthResponse()
+		shqs.UID = sourceRdonly.Tablet.Alias.Uid
 		qs := newTestQueryService(tc.t, sourceRdonly.Target(), shqs, 0, 1, topoproto.TabletAliasString(sourceRdonly.Tablet.Alias), false /* omitKeyspaceID */)
 		qs.addGeneratedRows(100, 100+rowsCount)
 		grpcqueryservice.Register(sourceRdonly.RPCServer, qs)

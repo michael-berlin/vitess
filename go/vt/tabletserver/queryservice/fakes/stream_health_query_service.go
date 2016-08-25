@@ -24,6 +24,7 @@ type StreamHealthQueryService struct {
 	ErrorQueryService
 	healthResponses chan *querypb.StreamHealthResponse
 	target          querypb.Target
+	UID             uint32
 }
 
 // NewStreamHealthQueryService creates a new fake query service for the target.
@@ -38,7 +39,24 @@ func NewStreamHealthQueryService(target querypb.Target) *StreamHealthQueryServic
 // It sends all queued and future healthResponses to the connected client e.g.
 // the healthcheck module.
 func (q *StreamHealthQueryService) StreamHealthRegister(c chan<- *querypb.StreamHealthResponse) (int, error) {
+	// If there are multiple initial messages, throw away all but the last one.
+	//	var initialShr *querypb.StreamHealthResponse
+	//drain:
+	//	for {
+	//		select {
+	//		case shr := <-q.healthResponses:
+	//			fmt.Printf("%p: %v: throwing away: %v\n", q, q.UID, shr)
+	//			initialShr = shr
+	//		default:
+	//			break drain
+	//		}
+	//	}
+
 	go func() {
+		//		if initialShr != nil {
+		//			fmt.Printf("%p: %v: sending: %v\n", q, q.UID, initialShr)
+		//			c <- initialShr
+		//		}
 		for shr := range q.healthResponses {
 			c <- shr
 		}
@@ -46,9 +64,15 @@ func (q *StreamHealthQueryService) StreamHealthRegister(c chan<- *querypb.Stream
 	return 0, nil
 }
 
+var i = 0
+
 // AddDefaultHealthResponse adds a faked health response to the buffer channel.
 // The response will have default values typical for a healthy tablet.
 func (q *StreamHealthQueryService) AddDefaultHealthResponse() {
+	//	if q.target.Shard == "-80" && q.target.TabletType == topodatapb.TabletType_RDONLY && len(q.healthResponses) == 0 && i >= 2 {
+	//		panic("bla")
+	//	}
+	//	i++
 	q.healthResponses <- &querypb.StreamHealthResponse{
 		Target:  proto.Clone(&q.target).(*querypb.Target),
 		Serving: true,
