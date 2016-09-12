@@ -412,18 +412,17 @@ func (m *MaxReplicationLagModule) decreaseAndGuessRate(r *result, now time.Time,
 	// particular replica.
 	lagRecordBefore := m.lagCache.atOrAfter(lagRecordNow.Key, m.lastRateChange)
 	if lagRecordBefore.isZero() {
-		// We don't know the replication lag of this replica since the last rate
-		// change. Without it we won't be able to guess the slave rate.
-		// Therefore, we'll stay in the current state and wait for more records.
-		r.Reason = "no previous lag record for this replica since the last rate change"
-		return
+		// We should see at least "lagRecordNow" here because we did just insert it
+		// in processRecord().
+		panic(fmt.Sprintf("BUG: replicationLagCache did not return the lagRecord for current replica: %v or a previous record of it. lastRateChange: %v replicationLagCache size: %v entries: %v", lagRecordNow, m.lastRateChange, len(m.lagCache.entries), m.lagCache.entries))
 	}
 	// Store the record in the result.
 	r.LagRecordBefore = lagRecordBefore
 	if lagRecordBefore.time == lagRecordNow.time {
-		// First record is the same as the last record. Not possible to calculate a
-		// diff. Wait for the next health stats update.
-		r.Reason = "no previous lag record available"
+		// No lag record for this replica before the current record and since the
+		// last rate change. Without it we won't be able to guess the slave rate.
+		// Therefore, we'll stay in the current state and wait for more records.
+		r.Reason = fmt.Sprintf("no previous lag record for this replica available since the last rate change (%.1f seconds ago)", now.Sub(m.lastRateChange).Seconds())
 		return
 	}
 
@@ -515,7 +514,7 @@ func (m *MaxReplicationLagModule) guessSlaveRate(r *result, avgMasterRate float6
 		// Backlog is too high. Reduce rate to 1 request/second.
 		// TODO(mberlin): Make this a constant.
 		newRate = 1
-		reason = fmt.Sprintf("based on the guessed slave rate of: %v the slave won't be able to process the guessed backlog of %d requests within the next %.f seconds", avgSlaveRate, int64(requestsBehind), m.config.MinDurationBetweenChanges().Seconds())
+		reason = fmt.Sprintf("based on the guessed slave rate of: %v the slave won't be able to process the guessed backlog of %d requests within the next %.f seconds", int64(avgSlaveRate), int64(requestsBehind), m.config.MinDurationBetweenChanges().Seconds())
 	} else {
 		reason = fmt.Sprintf("new rate is %d lower than the guessed slave rate to account for a guessed backlog of %d requests over %.f seconds", int64(avgSlaveRate-newRate), int64(requestsBehind), m.config.MinDurationBetweenChanges().Seconds())
 	}
@@ -542,7 +541,6 @@ func (m *MaxReplicationLagModule) updateRate(r *result, newState state, rate int
 	oldRate := m.rate.Get()
 
 	m.currentState = newState
-	m.lastRateChange = now
 	if newState != stateIncreaseRate {
 		// Clear the replica under test from a previous increase.
 		m.replicaUnderIncreaseTest = ""
@@ -562,6 +560,7 @@ func (m *MaxReplicationLagModule) updateRate(r *result, newState state, rate int
 		return
 	}
 
+	m.lastRateChange = now
 	m.rate.Set(int64(rate))
 	// Notify the throttler that we updated our max rate.
 	m.rateUpdateChan <- struct{}{}
