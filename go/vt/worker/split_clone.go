@@ -302,6 +302,11 @@ func (scw *SplitCloneWorker) StatusAsHTML() template.HTML {
 			statuses, _ := scw.tableStatusListOffline.format()
 			result += strings.Join(statuses, "</br>\n")
 		}
+
+		if (state == WorkerStateCloneOnline || state == WorkerStateCloneOffline) && (scw.maxTPS != throttler.MaxRateModuleDisabled || scw.maxReplicationLag != throttler.ReplicationLagModuleDisabled) {
+			result += "</br>\n"
+			result += `<b>Resharding Throttler:</b> <a href="/throtterz">see /throttlerz for details</a></br>\n`
+		}
 	}
 
 	return template.HTML(result)
