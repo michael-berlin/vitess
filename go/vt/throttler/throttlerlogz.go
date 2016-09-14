@@ -123,7 +123,7 @@ func showThrottlerLog(w http.ResponseWriter, m *managerImpl, name string) {
 	for _, r := range results {
 		// Color based on the new state.
 		var colorLevel string
-		switch r.NewState {
+		switch r.TestedState {
 		case stateIncreaseRate:
 			colorLevel = "low"
 		case stateDecreaseAndGuessRate:
