@@ -223,3 +223,4 @@ echo
 echo "bootstrap finished - run 'source dev.env' in your shell before building."
 
 bb
+3
