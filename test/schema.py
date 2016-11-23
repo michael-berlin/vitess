@@ -71,7 +71,7 @@ def _setup_shard_2():
 
   utils.run_vtctl(['InitShardMaster', '-force', test_keyspace + '/2',
                    shard_2_master.tablet_alias], auto_log=True)
-  utils.run_vtctl(['ValidateKeyspace', '-ping-tablets', test_keyspace])
+#   utils.run_vtctl(['ValidateKeyspace', '-ping-tablets', test_keyspace])
 
 
 def _teardown_shard_2():
@@ -125,8 +125,8 @@ class TestSchema(unittest.TestCase):
     for t in initial_tablets:
       t.wait_for_vttablet_state('NOT_SERVING')
 
-    utils.run_vtctl(['InitShardMaster', '-force', test_keyspace + '/0',
-                     shard_0_master.tablet_alias], auto_log=True)
+#     utils.run_vtctl(['InitShardMaster', '-force', test_keyspace + '/0',
+#                      shard_0_master.tablet_alias], auto_log=True)
     utils.run_vtctl(['InitShardMaster', '-force', test_keyspace + '/1',
                      shard_1_master.tablet_alias], auto_log=True)
 
@@ -297,7 +297,7 @@ class TestSchema(unittest.TestCase):
 
   def _test_vtctl_copyschemashard(self, source):
     # Apply initial schema to the whole keyspace before creating shard 2.
-    self._apply_initial_schema()
+#     self._apply_initial_schema()
 
     _setup_shard_2()
 
