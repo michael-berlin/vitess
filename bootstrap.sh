@@ -223,3 +223,4 @@ rm chromedriver_linux64.zip
 
 echo
 echo "bootstrap finished - run 'source dev.env' in your shell before building."
+
