@@ -99,6 +99,7 @@ func tryCreateTxThrottler() (*TxThrottler, error) {
 	// is immutable.
 	config.healthCheckCells = make([]string, len(tabletenv.Config.TxThrottlerHealthCheckCells))
 	copy(config.healthCheckCells, tabletenv.Config.TxThrottlerHealthCheckCells)
+	config.throttlerConfig = &throttlerConfig
 	return newTxThrottler(config)
 }
 
@@ -121,11 +122,42 @@ type txThrottlerState struct {
 	// throttleMu serializes calls to throttler.Throttler.Throttle(threadId).
 	// That method is required to be called in serial for each threadId.
 	throttleMu sync.Mutex
-	throttler  *throttler.Throttler
+	throttler  throttler.ThrottlerInterface
 
 	topoServer       topo.Server
 	healthCheck      discovery.HealthCheck
-	topologyWatchers []*discovery.TopologyWatcher
+	topologyWatchers []discovery.TopologyWatcherInterface
+}
+
+// These vars store the functions used to create the topo server, healthcheck
+// topology watchers and go/vt/throttler. These are provided here so that they can be overridden
+// in tests to generate mocks.
+type topoServerFactoryFunc func() topo.Server
+type healthCheckFactoryFunc func() discovery.HealthCheck
+type topologyWatcherFactoryFunc func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) discovery.TopologyWatcherInterface
+type vtThrottlerFactoryFunc func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (throttler.ThrottlerInterface, error)
+
+var (
+	topoServerFactory      topoServerFactoryFunc
+	healthCheckFactory     healthCheckFactoryFunc
+	topologyWatcherFactory topologyWatcherFactoryFunc
+	vtThrottlerFactory     vtThrottlerFactoryFunc
+)
+
+func init() {
+	resetTxThrottlerFactories()
+}
+
+func resetTxThrottlerFactories() {
+	topoServerFactory = topo.Open
+	healthCheckFactory = discovery.NewDefaultHealthCheck
+	topologyWatcherFactory = func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) discovery.TopologyWatcherInterface {
+		return discovery.NewShardReplicationWatcher(
+			topoServer, tr, cell, keyspace, shard, refreshInterval, topoReadConcurrency)
+	}
+	vtThrottlerFactory = func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (throttler.ThrottlerInterface, error) {
+		return throttler.NewThrottler(name, unit, threadCount, maxRate, maxReplicationLag)
+	}
 }
 
 // TxThrottlerName is the name the wrapped go/vt/throttler object will be registered
@@ -192,7 +224,7 @@ func (t *TxThrottler) Throttle() (result bool) {
 
 func newTxThrottlerState(config *txThrottlerConfig, keyspace, shard string,
 ) (*txThrottlerState, error) {
-	t, err := throttler.NewThrottler(
+	t, err := vtThrottlerFactory(
 		TxThrottlerName,
 		"TPS", /* unit */
 		1,     /* threadCount */
@@ -208,14 +240,15 @@ func newTxThrottlerState(config *txThrottlerConfig, keyspace, shard string,
 	result := &txThrottlerState{
 		throttler: t,
 	}
-	result.topoServer = topo.Open()
-	result.healthCheck = discovery.NewDefaultHealthCheck()
+	result.topoServer = topoServerFactory()
+	result.healthCheck = healthCheckFactory()
 	result.healthCheck.SetListener(result, false /* sendDownEvents */)
-	result.topologyWatchers = make([]*discovery.TopologyWatcher, 0, len(config.healthCheckCells))
+	result.topologyWatchers = make(
+		[]discovery.TopologyWatcherInterface, 0, len(config.healthCheckCells))
 	for _, cell := range config.healthCheckCells {
 		result.topologyWatchers = append(
 			result.topologyWatchers,
-			discovery.NewShardReplicationWatcher(
+			topologyWatcherFactory(
 				result.topoServer,
 				result.healthCheck, /* TabletRecorder */
 				cell,

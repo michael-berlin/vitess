@@ -65,6 +65,14 @@ type tabletInfo struct {
 	tablet *topodatapb.Tablet
 }
 
+// TopologyWatcherInterface defines the public interface every TopologyWatcher satisfies.
+// It's defined so that we can mock out a watcher.
+//go:generate mockgen -destination discovery_testing/mock_topology_watcher.go -package discovery_testing github.com/youtube/vitess/go/vt/discovery TopologyWatcherInterface
+type TopologyWatcherInterface interface {
+	WaitForInitialTopology() error
+	Stop()
+}
+
 // TopologyWatcher polls tablet from a configurable set of tablets
 // periodically. When tablets are added / removed, it calls
 // the TabletRecorder AddTablet / RemoveTablet interface appropriately.
