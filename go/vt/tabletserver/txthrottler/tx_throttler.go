@@ -23,7 +23,7 @@ import (
 // It uses a discovery.HealthCheck to send replication-lag updates to the wrapped throttler.
 //
 // Intended Usage:
-//   t := CreateTxThrottlerFromTabletConfig(&tabletserver.Config{...})
+//   t := CreateTxThrottlerFromTabletConfig()
 //
 //   // A transaction throttler must be opened before its first use:
 //   if err := t.Open(keyspace, shard); err != nil {
@@ -55,7 +55,7 @@ type TxThrottler struct {
 }
 
 // CreateTxThrottlerFromTabletConfig tries to construct a TxThrottler from the
-// relevant fields in the given tabletserver.Config object. It returns a disabled TxThrottler if
+// relevant fields in the global tabletserver.Config object. It returns a disabled TxThrottler if
 // any error occurs.
 // This function calls tryCreateTxThrottler that does the actual creation work
 // and returns an error if one occurred.
