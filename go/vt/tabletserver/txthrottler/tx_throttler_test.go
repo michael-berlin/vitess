@@ -1,4 +1,4 @@
-package tabletserver
+package txthrottler
 
 import (
 	"testing"
@@ -6,12 +6,8 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/discovery/discovery_testing"
 	"github.com/youtube/vitess/go/vt/tabletserver/tabletenv"
-	"github.com/youtube/vitess/go/vt/throttler"
-	"github.com/youtube/vitess/go/vt/throttler/throttler_testing"
 	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topotests"
 
 	querypb "github.com/youtube/vitess/go/vt/proto/query"
 	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
@@ -36,11 +32,12 @@ func TestEnabledThrottler(t *testing.T) {
 	defer mockCtrl.Finish()
 
 	defer resetTxThrottlerFactories()
-	mockTopoServer, mockImpl := topotests.NewMockServer(mockCtrl)
-	mockImpl.EXPECT().Close()
+	mockTopoImpl := NewMockImpl(mockCtrl)
+	mockTopoImpl.EXPECT().Close()
+	mockTopoServer := topo.Server{Impl: mockTopoImpl}
 	topoServerFactory = func() topo.Server { return mockTopoServer }
 
-	mockHealthCheck := discovery_testing.NewMockHealthCheck(mockCtrl)
+	mockHealthCheck := NewMockHealthCheck(mockCtrl)
 	var hcListener discovery.HealthCheckStatsListener
 	hcCall1 := mockHealthCheck.EXPECT().SetListener(gomock.Any(), false /* sendDownEvents */)
 	hcCall1.Do(func(listener discovery.HealthCheckStatsListener, sendDownEvents bool) {
@@ -51,7 +48,7 @@ func TestEnabledThrottler(t *testing.T) {
 	hcCall2.After(hcCall1)
 	healthCheckFactory = func() discovery.HealthCheck { return mockHealthCheck }
 
-	topologyWatcherFactory = func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) discovery.TopologyWatcherInterface {
+	topologyWatcherFactory = func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface {
 		if mockTopoServer.Impl != topoServer.Impl {
 			t.Errorf("want: %v, got: %v", mockTopoServer, topoServer)
 		}
@@ -64,13 +61,13 @@ func TestEnabledThrottler(t *testing.T) {
 		if shard != "shard" {
 			t.Errorf("want: shard, got: %v", shard)
 		}
-		result := discovery_testing.NewMockTopologyWatcherInterface(mockCtrl)
+		result := NewMockTopologyWatcherInterface(mockCtrl)
 		result.EXPECT().Stop()
 		return result
 	}
 
-	mockVtThrottler := throttler_testing.NewMockThrottlerInterface(mockCtrl)
-	vtThrottlerFactory = func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (throttler.ThrottlerInterface, error) {
+	mockVtThrottler := NewMockThrottlerInterface(mockCtrl)
+	vtThrottlerFactory = func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (ThrottlerInterface, error) {
 		if threadCount != 1 {
 			t.Errorf("want: 1, got: %v", threadCount)
 		}

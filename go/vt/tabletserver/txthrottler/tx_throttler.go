@@ -1,4 +1,4 @@
-package tabletserver
+package txthrottler
 
 import (
 	"fmt"
@@ -43,9 +43,6 @@ import (
 // A TxThrottler object is generally not thread-safe: at any given time at most one goroutine should
 // be executing a method. The only exception is the 'Throttle' method where multiple goroutines are
 // allowed to execute it concurrently.
-//
-// TODO(erez): Move this to its own package. Currently, only exported functions and types are
-// intended to be used from outside this file by non-test code.
 type TxThrottler struct {
 	// config stores the transaction throttler's configuration.
 	// It is populated in NewTxThrottler and is not modified
@@ -122,11 +119,11 @@ type txThrottlerState struct {
 	// throttleMu serializes calls to throttler.Throttler.Throttle(threadId).
 	// That method is required to be called in serial for each threadId.
 	throttleMu sync.Mutex
-	throttler  throttler.ThrottlerInterface
+	throttler  ThrottlerInterface
 
 	topoServer       topo.Server
 	healthCheck      discovery.HealthCheck
-	topologyWatchers []discovery.TopologyWatcherInterface
+	topologyWatchers []TopologyWatcherInterface
 }
 
 // These vars store the functions used to create the topo server, healthcheck
@@ -134,8 +131,8 @@ type txThrottlerState struct {
 // in tests to generate mocks.
 type topoServerFactoryFunc func() topo.Server
 type healthCheckFactoryFunc func() discovery.HealthCheck
-type topologyWatcherFactoryFunc func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) discovery.TopologyWatcherInterface
-type vtThrottlerFactoryFunc func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (throttler.ThrottlerInterface, error)
+type topologyWatcherFactoryFunc func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface
+type vtThrottlerFactoryFunc func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (ThrottlerInterface, error)
 
 var (
 	topoServerFactory      topoServerFactoryFunc
@@ -151,11 +148,11 @@ func init() {
 func resetTxThrottlerFactories() {
 	topoServerFactory = topo.Open
 	healthCheckFactory = discovery.NewDefaultHealthCheck
-	topologyWatcherFactory = func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) discovery.TopologyWatcherInterface {
+	topologyWatcherFactory = func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface {
 		return discovery.NewShardReplicationWatcher(
 			topoServer, tr, cell, keyspace, shard, refreshInterval, topoReadConcurrency)
 	}
-	vtThrottlerFactory = func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (throttler.ThrottlerInterface, error) {
+	vtThrottlerFactory = func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (ThrottlerInterface, error) {
 		return throttler.NewThrottler(name, unit, threadCount, maxRate, maxReplicationLag)
 	}
 }
@@ -244,7 +241,7 @@ func newTxThrottlerState(config *txThrottlerConfig, keyspace, shard string,
 	result.healthCheck = healthCheckFactory()
 	result.healthCheck.SetListener(result, false /* sendDownEvents */)
 	result.topologyWatchers = make(
-		[]discovery.TopologyWatcherInterface, 0, len(config.healthCheckCells))
+		[]TopologyWatcherInterface, 0, len(config.healthCheckCells))
 	for _, cell := range config.healthCheckCells {
 		result.topologyWatchers = append(
 			result.topologyWatchers,
@@ -303,3 +300,34 @@ func (ts *txThrottlerState) StatsUpdate(tabletStats *discovery.TabletStats) {
 	}
 	ts.throttler.RecordReplicationLag(time.Now(), tabletStats)
 }
+
+// The following interfaces are only defined to allow the test to mock them out.
+// Do NOT use them outside of this package.
+
+// ThrottlerInterface is a subset of the public API of throttler.Throttler.
+//
+// NOTE: The mockgen command below fails with the error:
+// "Failed to format generated source code: 42:69: expected 'IDENT', found '{' (and 2 more errors)"
+//
+// You need to patch https://github.com/golang/mock/pull/45 into your mockgen
+// to fix it. See https://github.com/golang/mock/issues/46.
+//go:generate mockgen -destination mock_throttler_test.go -package txthrottler github.com/youtube/vitess/go/vt/tabletserver/txthrottler ThrottlerInterface
+type ThrottlerInterface interface {
+	Throttle(threadID int) time.Duration
+	Close()
+	RecordReplicationLag(time time.Time, ts *discovery.TabletStats)
+	UpdateConfiguration(configuration *throttlerdatapb.Configuration, copyZeroValues bool) error
+}
+
+// TopologyWatcherInterface has the same API as discovery.TopologyWatcher.
+//go:generate mockgen -destination mock_topology_watcher_test.go -package txthrottler github.com/youtube/vitess/go/vt/tabletserver/txthrottler TopologyWatcherInterface
+type TopologyWatcherInterface interface {
+	WaitForInitialTopology() error
+	Stop()
+}
+
+// Generate mocks for Topology and HealthCheck from existing interfaces.
+//go:generate mockgen -destination mock_healthcheck_test.go -package txthrottler github.com/youtube/vitess/go/vt/discovery HealthCheck
+//go:generate mockgen -destination mock_topo_impl_test.go -package txthrottler github.com/youtube/vitess/go/vt/topo Impl
+// TODO(mberlin): Remove the next line once we use the Go 1.7 package "context" everywhere.
+//go:generate sed -i s,github.com/youtube/vitess/vendor/,,g mock_topo_impl_test.go

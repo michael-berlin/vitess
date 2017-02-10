@@ -52,21 +52,6 @@ const (
 	InvalidMaxReplicationLag = -1
 )
 
-// ThrottlerInterface defines the public interface that is implemented by Throttler.
-// It is used to allow mocking out a throttler object.
-//go:generate mockgen -destination throttler_testing/mock_throttler.go -package throttler_testing github.com/youtube/vitess/go/vt/throttler ThrottlerInterface
-type ThrottlerInterface interface {
-	Throttle(threadId int) time.Duration
-	ThreadFinished(threadId int)
-	Close()
-	MaxRate() int64
-	SetMaxRate(rate int64)
-	RecordReplicationLag(time time.Time, ts *discovery.TabletStats)
-	GetConfiguration() *throttlerdata.Configuration
-	UpdateConfiguration(configuration *throttlerdata.Configuration, copyZeroValues bool) error
-	ResetConfiguration()
-}
-
 // Throttler provides a client-side, thread-aware throttler.
 // See the package doc for more information.
 //

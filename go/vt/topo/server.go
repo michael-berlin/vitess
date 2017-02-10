@@ -71,10 +71,6 @@ var (
 //
 // FIXME(alainjobart) we are deprecating this interface, to be
 // replaced with a lower level interface defined by Backend.
-//
-// Command to generate a mock for this interface with mockgen.
-//go:generate mockgen -destination topotests/mock_impl.go -package topotests github.com/youtube/vitess/go/vt/topo Impl
-//go:generate sed -i s,github.com/youtube/vitess/vendor/,,g topotests/mock_impl.go
 type Impl interface {
 	// Impl will eventually be entirely replaced with Backend, and
 	// just disappear.

@@ -159,7 +159,6 @@ func (e *TabletStats) String() string {
 // which is used for each tablet, use the "GetConnection()" method
 // below and pass in the Key string which is also sent to the
 // listener in each update (as it is part of TabletStats).
-//go:generate mockgen -destination discovery_testing/mock_healthcheck.go -package discovery_testing github.com/youtube/vitess/go/vt/discovery HealthCheck
 type HealthCheck interface {
 	// TabletRecorder interface adds AddTablet and RemoveTablet methods.
 	// AddTablet adds the tablet, and starts health check on it.
