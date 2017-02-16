@@ -59,6 +59,7 @@ func (dbc *DBConn) Exec(ctx context.Context, query string, maxrows int, wantfiel
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		r, err := dbc.execOnce(ctx, query, maxrows, wantfields)
+		fmt.Println("attempt", attempt, "err", err, "query", query)
 		switch {
 		case err == nil:
 			return r, nil

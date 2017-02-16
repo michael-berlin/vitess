@@ -17,8 +17,10 @@ import (
 	"github.com/youtube/vitess/go/mysqlconn/fakesqldb"
 	"github.com/youtube/vitess/go/sqldb"
 	"github.com/youtube/vitess/go/sqltypes"
+	"github.com/youtube/vitess/go/vt/vterrors"
 
 	querypb "github.com/youtube/vitess/go/vt/proto/query"
+	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
 )
 
 func TestDBConnExec(t *testing.T) {
@@ -45,6 +47,7 @@ func TestDBConnExec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("should not get an error, err: %v", err)
 	}
+
 	// Exec succeed, not asking for fields.
 	result, err := dbConn.Exec(ctx, sql, 1, false)
 	if err != nil {
@@ -54,6 +57,7 @@ func TestDBConnExec(t *testing.T) {
 	if !reflect.DeepEqual(expectedResult, result) {
 		t.Errorf("Exec: %v, want %v", expectedResult, result)
 	}
+
 	// Exec fail
 	db.AddRejectedQuery(sql, &sqldb.SQLError{
 		Num:     2012,
@@ -64,6 +68,60 @@ func TestDBConnExec(t *testing.T) {
 	want := "connection fail"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("Exec: %v, want %s", err, want)
+	}
+	if got, want := vterrors.RecoverVtErrorCode(err), vtrpcpb.ErrorCode_INTERNAL_ERROR; got != want {
+		t.Errorf("wrong error code for Exec error: got = %v, want = %v", got, want)
+	}
+}
+
+func TestDBConnExec(t *testing.T) {
+	db := fakesqldb.New(t)
+	defer db.Close()
+	sql := "select * from test_table limit 1000"
+	expectedResult := &sqltypes.Result{
+		Fields: []*querypb.Field{
+			{Type: sqltypes.VarChar},
+		},
+		RowsAffected: 1,
+		Rows: [][]sqltypes.Value{
+			{sqltypes.MakeTrusted(sqltypes.VarChar, []byte("123"))},
+		},
+	}
+	db.AddQuery(sql, expectedResult)
+	connPool := newPool()
+	connPool.Open(db.ConnParams(), db.ConnParams())
+	defer connPool.Close()
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Second))
+	defer cancel()
+	dbConn, err := NewDBConn(connPool, db.ConnParams(), db.ConnParams())
+	defer dbConn.Close()
+	if err != nil {
+		t.Fatalf("should not get an error, err: %v", err)
+	}
+
+	// Exec succeed, not asking for fields.
+	result, err := dbConn.Exec(ctx, sql, 1, false)
+	if err != nil {
+		t.Fatalf("should not get an error, err: %v", err)
+	}
+	expectedResult.Fields = nil
+	if !reflect.DeepEqual(expectedResult, result) {
+		t.Errorf("Exec: %v, want %v", expectedResult, result)
+	}
+
+	// Exec fail
+	db.AddRejectedQuery(sql, &sqldb.SQLError{
+		Num:     2012,
+		Message: "connection fail",
+		Query:   "",
+	})
+	_, err = dbConn.Exec(ctx, sql, 1, false)
+	want := "connection fail"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("Exec: %v, want %s", err, want)
+	}
+	if got, want := vterrors.RecoverVtErrorCode(err), vtrpcpb.ErrorCode_INTERNAL_ERROR; got != want {
+		t.Errorf("wrong error code for Exec error: got = %v, want = %v", got, want)
 	}
 }
 
