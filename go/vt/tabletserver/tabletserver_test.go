@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1451,6 +1452,161 @@ func TestExecuteBatchNestedTransaction(t *testing.T) {
 		t.Fatalf("TabletServer.Execute should fail because of nested transaction")
 	}
 	tsv.te.txPool.SetTimeout(10)
+}
+
+func TestSerializeTransactionsSameRow(t *testing.T) {
+	// This test runs three transaction in parallel:
+	// tx1 | tx2 | tx3
+	// However, tx1 and tx2 have the same WHERE clause (i.e. target the same row)
+	// and therefore tx2 cannot start until the first query of tx1 has finished.
+	// The actual execution looks like this:
+	// tx1 | tx3
+	// tx2
+	db := setUpTabletServerTest(t)
+	defer db.Close()
+	testUtils := newTestUtils()
+	config := testUtils.newQueryServiceConfig()
+	config.TransactionCap = 2
+	tsv := NewTabletServerWithNilTopoServer(config)
+	dbconfigs := testUtils.newDBConfigs(db)
+	target := querypb.Target{TabletType: topodatapb.TabletType_MASTER}
+	if err := tsv.StartService(target, dbconfigs, testUtils.newMysqld(&dbconfigs)); err != nil {
+		t.Fatalf("StartService failed: %v", err)
+	}
+	defer tsv.StopService()
+
+	// Make sure that tx3 and tx3 start only after tx1 is running its Execute().
+	tx1Started := make(chan struct{})
+	// Make sure that tx3 could finish while tx2 could not.
+	tx3Finished := make(chan struct{})
+
+	// Fake data.
+	q1 := "update test_table set name_string = 'tx1' where pk = :pk and name = :name"
+	qfake1 := "update test_table set name_string = 'tx1' where pk in (1) /* _stream test_table (pk ) (1 ); */"
+	bvPk1 := map[string]interface{}{
+		"pk":   1,
+		"name": 1,
+	}
+	r1 := &sqltypes.Result{RowsAffected: 1}
+	db.AddQuery(qfake1, r1).SetBeforeFunc(func() {
+		close(tx1Started)
+		if err := waitForTxSerializationCount(tsv, "test_table where pk = 1 and name = 1", 1); err != nil {
+			t.Fatal(err)
+		}
+	})
+	// Complex WHERE clause requires SELECT of primary key first.
+	qsub1 := "select pk from test_table where pk = 1 and name = 1 limit 10001 for update"
+	rsub1 := &sqltypes.Result{
+		Fields: []*querypb.Field{
+			{Type: sqltypes.Int64},
+		},
+		RowsAffected: 1,
+		Rows: [][]sqltypes.Value{{
+			sqltypes.MakeString([]byte("1")),
+		}},
+	}
+	db.AddQuery(qsub1, rsub1)
+
+	q2 := strings.Replace(q1, "tx1", "tx2", -1)
+	qfake2 := strings.Replace(qfake1, "tx1", "tx2", -1)
+	db.AddQuery(qfake2, r1)
+
+	q3 := "update test_table set name_string = 'tx3' where pk = :pk and name = :name"
+	qfake3 := "update test_table set name_string = 'tx3' where pk in (2) /* _stream test_table (pk ) (2 ); */"
+	bvPk2 := map[string]interface{}{
+		"pk":   2,
+		"name": 1,
+	}
+	db.AddQuery(qfake3, r1)
+	// Complex WHERE clause requires SELECT of primary key first.
+	qsub3 := "select pk from test_table where pk = 2 and name = 1 limit 10001 for update"
+	rsub3 := &sqltypes.Result{
+		Fields: []*querypb.Field{
+			{Type: sqltypes.Int64},
+		},
+		RowsAffected: 1,
+		Rows: [][]sqltypes.Value{{
+			sqltypes.MakeString([]byte("2")),
+		}},
+	}
+	db.AddQuery(qsub3, rsub3)
+
+	// Run all three transactions.
+	ctx := context.Background()
+	wg := sync.WaitGroup{}
+
+	// tx1.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		_, tx1, err := tsv.BeginExecute(ctx, &target, q1, bvPk1, nil)
+		if err != nil {
+			t.Fatalf("failed to execute query: %s: %s", q1, err)
+		}
+		if err := tsv.Commit(ctx, &target, tx1); err != nil {
+			t.Fatalf("call TabletServer.Commit failed: %v", err)
+		}
+	}()
+
+	// tx2.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		<-tx1Started
+		_, tx2, err := tsv.BeginExecute(ctx, &target, q2, bvPk1, nil)
+		if err != nil {
+			t.Fatalf("failed to execute query: %s: %s", q2, err)
+		}
+		// TODO(mberlin): This should actually be in the BeforeFunc() of tx1 but
+		// then the test is hanging. It looks like the MySQL C client library cannot
+		// open a second connection while the request of the first connection is
+		// still pending.
+		<-tx3Finished
+		if err := tsv.Commit(ctx, &target, tx2); err != nil {
+			t.Fatalf("call TabletServer.Commit failed: %v", err)
+		}
+	}()
+
+	// tx3.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		<-tx1Started
+		_, tx3, err := tsv.BeginExecute(ctx, &target, q3, bvPk2, nil)
+		if err != nil {
+			t.Fatalf("failed to execute query: %s: %s", q3, err)
+		}
+		if err := tsv.Commit(ctx, &target, tx3); err != nil {
+			t.Fatalf("call TabletServer.Commit failed: %v", err)
+		}
+		close(tx3Finished)
+	}()
+
+	wg.Wait()
+
+	v, ok := tabletenv.WaitStats.Counts()["TxSerializer"]
+	if !ok || v != 1 {
+		t.Fatalf("only tx2 should have been serialized: ok? %v v: %v", ok, v)
+	}
+}
+
+func waitForTxSerializationCount(tsv *TabletServer, key string, i int) error {
+	start := time.Now()
+	for {
+		got, want := tsv.qe.txSerializer.QueryCountForTesting(key), int64(i)
+		if got == want {
+			fmt.Println(got, want)
+			return nil
+		}
+
+		if time.Since(start) > 10*time.Second {
+			return fmt.Errorf("wait for query count increasein TxSerializer timed out: got = %v, want = %v", got, want)
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 }
 
 func TestMessageStream(t *testing.T) {

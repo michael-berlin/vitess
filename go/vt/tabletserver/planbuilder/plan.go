@@ -212,6 +212,10 @@ type ExecPlan struct {
 	// For update: set clause if pk is changing.
 	SecondaryPKValues []interface{} `json:",omitempty"`
 
+	// WhereClause is set for DMLs. It is used by the transaction serializer
+	// to serialize e.g. UPDATEs going to the same row.
+	WhereClause *sqlparser.ParsedQuery `json:",omitempty"`
+
 	// For PlanInsertSubquery: pk columns in the subquery result.
 	SubqueryPKColumns []int `json:",omitempty"`
 

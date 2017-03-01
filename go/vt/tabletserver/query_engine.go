@@ -109,6 +109,14 @@ type QueryEngine struct {
 
 	// Services
 	consolidator *sync2.Consolidator
+	// txSerializer protects vttablet from applications which try to concurrently
+	// UPDATE (or DELETE) a "hot" row (or range of rows).
+	// Such queries would be serialized by MySQL anyway. This serializer prevents
+	// that we start more than one transaction per hot row (range).
+	// For implementation details, please see BeginExecute() in tabletserver.go.
+	// Note: Although we use the Consolidator object, we don't actually re-use
+	// results across queries.
+	txSerializer *sync2.Consolidator
 	streamQList  *QueryList
 
 	// Vars
@@ -158,6 +166,7 @@ func NewQueryEngine(checker MySQLChecker, se *schema.Engine, config tabletenv.Ta
 	)
 
 	qe.consolidator = sync2.NewConsolidator()
+	qe.txSerializer = sync2.NewConsolidator()
 	qe.streamQList = NewQueryList()
 
 	qe.strictMode.Set(config.StrictMode)
@@ -202,6 +211,7 @@ func NewQueryEngine(checker MySQLChecker, se *schema.Engine, config tabletenv.Ta
 		_ = stats.NewMultiCountersFunc("QueryErrorCounts", []string{"Table", "Plan"}, qe.getQueryErrorCount)
 
 		http.Handle("/debug/consolidations", qe.consolidator)
+		http.Handle("/debug/tx_serializer", qe.txSerializer)
 
 		endpoints := []string{
 			"/debug/tablet_plans",
@@ -256,7 +266,7 @@ func (qe *QueryEngine) GetPlan(ctx context.Context, logStats *tabletenv.LogStats
 	// race conditions.
 	qe.mu.Lock()
 	defer qe.mu.Unlock()
-	// Recheck. A plan might have been built by someone elqe.
+	// Recheck. A plan might have been built by someone else.
 	if plan := qe.getQuery(sql); plan != nil {
 		return plan, nil
 	}

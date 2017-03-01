@@ -54,6 +54,18 @@ func (co *Consolidator) Create(query string) (r *Result, created bool) {
 	return r, true
 }
 
+// QueryCountForTesting returns how many requests are in progress for a query.
+// Note that this count is never reset, i.e. multiple times where the query
+// was in progress can be counted.
+// The method is meant for unit tests only.
+func (co *Consolidator) QueryCountForTesting(query string) int64 {
+	v, ok := co.consolidations.Get(query)
+	if !ok {
+		return 0
+	}
+	return v.(*ccount).get()
+}
+
 func (co *Consolidator) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	if err := acl.CheckAccessHTTP(request, acl.DEBUGGING); err != nil {
 		acl.SendError(response, err)

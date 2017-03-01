@@ -29,6 +29,11 @@ func analyzeUpdate(upd *sqlparser.Update, getTable TableGetter) (plan *ExecPlan,
 		return nil, err
 	}
 
+	// Store the WHERE clause as string for the transaction serializer.
+	buf := sqlparser.NewTrackedBuffer(nil)
+	buf.Myprintf("%v", upd.Where)
+	plan.WhereClause = buf.ParsedQuery()
+
 	if !table.HasPrimary() {
 		log.Warningf("no primary key for table %s", tableName)
 		plan.Reason = ReasonTableNoIndex
@@ -72,6 +77,11 @@ func analyzeDelete(del *sqlparser.Delete, getTable TableGetter) (plan *ExecPlan,
 	if err != nil {
 		return nil, err
 	}
+
+	// Store the WHERE clause as string for the Transaction Consolidator.
+	buf := sqlparser.NewTrackedBuffer(nil)
+	buf.Myprintf("%v", del.Where)
+	plan.WhereClause = buf.ParsedQuery()
 
 	if !table.HasPrimary() {
 		log.Warningf("no primary key for table %s", tableName)

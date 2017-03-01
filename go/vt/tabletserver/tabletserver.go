@@ -17,6 +17,7 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/youtube/vitess/go/acl"
+	"github.com/youtube/vitess/go/hack"
 	"github.com/youtube/vitess/go/history"
 	"github.com/youtube/vitess/go/mysqlconn"
 	"github.com/youtube/vitess/go/mysqlconn/replication"
@@ -33,6 +34,7 @@ import (
 	"github.com/youtube/vitess/go/vt/sqlparser"
 	"github.com/youtube/vitess/go/vt/tabletserver/connpool"
 	"github.com/youtube/vitess/go/vt/tabletserver/engines/schema"
+	"github.com/youtube/vitess/go/vt/tabletserver/planbuilder"
 	"github.com/youtube/vitess/go/vt/tabletserver/queryservice"
 	"github.com/youtube/vitess/go/vt/tabletserver/querytypes"
 	"github.com/youtube/vitess/go/vt/tabletserver/splitquery"
@@ -69,6 +71,8 @@ const (
 
 // logTxPoolFull is for throttling txpool full messages in the log.
 var logTxPoolFull = logutil.NewThrottledLogger("TxPoolFull", 1*time.Minute)
+
+var logComputeRowSerializerKey = logutil.NewThrottledLogger("ComputeRowSerializerKey", 1*time.Minute)
 
 // stateName names every state. The number of elements must
 // match the number of states. Names can overlap.
@@ -915,6 +919,42 @@ func (tsv *TabletServer) ExecuteBatch(ctx context.Context, target *querypb.Targe
 
 // BeginExecute combines Begin and Execute.
 func (tsv *TabletServer) BeginExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions) (*sqltypes.Result, int64, error) {
+	if k := tsv.computeTxSerializerKey(ctx, sql, bindVariables); k != "" {
+		// Serialize the creation of new transactions *if* the first
+		// UPDATE or DELETE query has the same WHERE clause as a query which is
+		// already running in a transaction (only other BeginExecute() calls are
+		// considered). This avoids exhausting all txpool slots due to a hot row.
+		//
+		// Known Issue: There can be more than one transaction pool slot in use for
+		// the same row because the next transaction is unblocked after this
+		// BeginExecute() call is done and before Commit() on this transaction has
+		// been called. Due to the additional MySQL locking, this should result into
+		// two transaction pool slots per row at most. (This transaction pending on
+		// COMMIT, the next one waiting for MySQL in BEGIN+EXECUTE.)
+		q, ok := tsv.qe.txSerializer.Create(k)
+		if ok {
+			// No other pending query. Start a new transaction below.
+			defer q.Broadcast()
+		} else {
+			startTime := time.Now()
+			waitDone := make(chan struct{})
+			go func() {
+				q.Wait()
+				close(waitDone)
+			}()
+
+			// Block until the context is done or the query of the other transaction
+			// has finished.
+			select {
+			case <-ctx.Done():
+				tabletenv.WaitStats.Record("TxSerializer", startTime)
+				return nil, 0, ctx.Err()
+			case <-waitDone:
+				tabletenv.WaitStats.Record("TxSerializer", startTime)
+			}
+		}
+	}
+
 	transactionID, err := tsv.Begin(ctx, target)
 	if err != nil {
 		return nil, 0, err
@@ -922,6 +962,41 @@ func (tsv *TabletServer) BeginExecute(ctx context.Context, target *querypb.Targe
 
 	result, err := tsv.Execute(ctx, target, sql, bindVariables, transactionID, options)
 	return result, transactionID, err
+}
+
+// computeTxSerializerKey returns a unique string used to determine whether two
+// queries would update the same row (range).
+// It returns an empty string if this feature is disabled or if the query row
+// (range) cannot be parsed from the query and bind variables or this .
+func (tsv *TabletServer) computeTxSerializerKey(ctx context.Context, sql string, bindVariables map[string]interface{}) string {
+	// TODO(mberlin): Add query service config to disable this feature.
+
+	// We only create logStats for GetPlan() and don't use it otherwise.
+	logStats := tabletenv.NewLogStats(ctx, "waitForSameRowTransactions")
+	plan, err := tsv.qe.GetPlan(ctx, logStats, sql)
+	if err != nil {
+		logComputeRowSerializerKey.Errorf("failed to get plan for query: %v err: %v", sql, err)
+		return ""
+	}
+
+	if plan.PlanID != planbuilder.PlanDMLPK && plan.PlanID != planbuilder.PlanDMLSubquery {
+		// Serialize only UPDATE or DELETE queries.
+		return ""
+	}
+
+	if plan.TableName.IsEmpty() {
+		// Do not serialize any queries without a table name.
+		return ""
+	}
+
+	where, err := plan.WhereClause.GenerateQuery(bindVariables)
+	if err != nil {
+		logComputeRowSerializerKey.Errorf("failed to substitute bind vars in where clause: %v query: %v bind vars: %v", err, sql, bindVariables)
+		return ""
+	}
+
+	// Example: table1 where id = 1 and sub_id = 2
+	return fmt.Sprintf("%v%v", plan.TableName, hack.String(where))
 }
 
 // BeginExecuteBatch combines Begin and ExecuteBatch.
