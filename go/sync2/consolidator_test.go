@@ -8,12 +8,24 @@ func TestConsolidator(t *testing.T) {
 
 	orig, added := con.Create(sql)
 	if !added {
-		t.Errorf("expected consolidator to register a new entry")
+		t.Fatalf("expected consolidator to register a new entry")
+	}
+	if got, want := orig.pending, 1; got != want {
+		t.Fatalf("wrong pending count: got = %v, want = %v", got, want)
 	}
 
 	dup, added := con.Create(sql)
 	if added {
-		t.Errorf("did not expect consolidator to register a new entry")
+		t.Fatalf("did not expect consolidator to register a new entry")
+	}
+	if got, want := dup.pending, 2; got != want {
+		t.Fatalf("wrong pending count: got = %v, want = %v", got, want)
+	}
+
+	// Limit version checks for the limit.
+	_, _, limited := con.CreateWithLimit(sql, 2)
+	if !limited {
+		t.Fatal("CreateWithLimit() should not have gone over the limit")
 	}
 
 	result := 1
@@ -27,13 +39,17 @@ func TestConsolidator(t *testing.T) {
 		t.Errorf("failed to pass result")
 	}
 	if *orig.Result.(*int) != *dup.Result.(*int) {
-		t.Errorf("failed to share the result")
+		t.Fatalf("failed to share the result")
 	}
 
 	// Running the query again should add a new entry since the original
 	// query execution completed
-	_, added = con.Create(sql)
+	orig, added = con.Create(sql)
 	if !added {
-		t.Errorf("expected consolidator to register a new entry")
+		t.Fatalf("expected consolidator to register a new entry")
+	}
+	// pending starts at 1 again because it's a new "round".
+	if got, want := orig.pending, 1; got != want {
+		t.Fatalf("wrong pending count: got = %v, want = %v", got, want)
 	}
 }

@@ -1474,62 +1474,36 @@ func TestSerializeTransactionsSameRow(t *testing.T) {
 		t.Fatalf("StartService failed: %v", err)
 	}
 	defer tsv.StopService()
-
-	// Make sure that tx3 and tx3 start only after tx1 is running its Execute().
-	tx1Started := make(chan struct{})
-	// Make sure that tx3 could finish while tx2 could not.
-	tx3Finished := make(chan struct{})
+	countStart := tabletenv.WaitStats.Counts()["TxSerializer"]
 
 	// Fake data.
 	q1 := "update test_table set name_string = 'tx1' where pk = :pk and name = :name"
-	qfake1 := "update test_table set name_string = 'tx1' where pk in (1) /* _stream test_table (pk ) (1 ); */"
+	q2 := "update test_table set name_string = 'tx2' where pk = :pk and name = :name"
+	q3 := "update test_table set name_string = 'tx3' where pk = :pk and name = :name"
 	bvPk1 := map[string]interface{}{
 		"pk":   1,
 		"name": 1,
 	}
-	r1 := &sqltypes.Result{RowsAffected: 1}
-	db.AddQuery(qfake1, r1).SetBeforeFunc(func() {
+	bvPk2 := map[string]interface{}{
+		"pk":   2,
+		"name": 1,
+	}
+
+	// Make sure that tx2 and tx3 start only after tx1 is running its Execute().
+	tx1Started := make(chan struct{})
+	// Make sure that tx3 could finish while tx2 could not.
+	tx3Finished := make(chan struct{})
+
+	r, ok := db.ExpectedResult("update test_table set name_string = 'tx1' where pk in (1) /* _stream test_table (pk ) (1 ); */")
+	if !ok {
+		t.Fatal("query for tx1 not registered")
+	}
+	r.SetBeforeFunc(func() {
 		close(tx1Started)
 		if err := waitForTxSerializationCount(tsv, "test_table where pk = 1 and name = 1", 1); err != nil {
 			t.Fatal(err)
 		}
 	})
-	// Complex WHERE clause requires SELECT of primary key first.
-	qsub1 := "select pk from test_table where pk = 1 and name = 1 limit 10001 for update"
-	rsub1 := &sqltypes.Result{
-		Fields: []*querypb.Field{
-			{Type: sqltypes.Int64},
-		},
-		RowsAffected: 1,
-		Rows: [][]sqltypes.Value{{
-			sqltypes.MakeString([]byte("1")),
-		}},
-	}
-	db.AddQuery(qsub1, rsub1)
-
-	q2 := strings.Replace(q1, "tx1", "tx2", -1)
-	qfake2 := strings.Replace(qfake1, "tx1", "tx2", -1)
-	db.AddQuery(qfake2, r1)
-
-	q3 := "update test_table set name_string = 'tx3' where pk = :pk and name = :name"
-	qfake3 := "update test_table set name_string = 'tx3' where pk in (2) /* _stream test_table (pk ) (2 ); */"
-	bvPk2 := map[string]interface{}{
-		"pk":   2,
-		"name": 1,
-	}
-	db.AddQuery(qfake3, r1)
-	// Complex WHERE clause requires SELECT of primary key first.
-	qsub3 := "select pk from test_table where pk = 2 and name = 1 limit 10001 for update"
-	rsub3 := &sqltypes.Result{
-		Fields: []*querypb.Field{
-			{Type: sqltypes.Int64},
-		},
-		RowsAffected: 1,
-		Rows: [][]sqltypes.Value{{
-			sqltypes.MakeString([]byte("2")),
-		}},
-	}
-	db.AddQuery(qsub3, rsub3)
 
 	// Run all three transactions.
 	ctx := context.Background()
@@ -1587,9 +1561,10 @@ func TestSerializeTransactionsSameRow(t *testing.T) {
 
 	wg.Wait()
 
-	v, ok := tabletenv.WaitStats.Counts()["TxSerializer"]
-	if !ok || v != 1 {
-		t.Fatalf("only tx2 should have been serialized: ok? %v v: %v", ok, v)
+	got, ok := tabletenv.WaitStats.Counts()["TxSerializer"]
+	want := countStart + 1
+	if !ok || got != want {
+		t.Fatalf("only tx2 should have been serialized: ok? %v got: %v want: %v", ok, got, want)
 	}
 }
 
@@ -1598,14 +1573,97 @@ func waitForTxSerializationCount(tsv *TabletServer, key string, i int) error {
 	for {
 		got, want := tsv.qe.txSerializer.QueryCountForTesting(key), int64(i)
 		if got == want {
-			fmt.Println(got, want)
 			return nil
 		}
 
 		if time.Since(start) > 10*time.Second {
-			return fmt.Errorf("wait for query count increasein TxSerializer timed out: got = %v, want = %v", got, want)
+			return fmt.Errorf("wait for query count increase in TxSerializer timed out: got = %v, want = %v", got, want)
 		}
 		time.Sleep(1 * time.Millisecond)
+	}
+}
+
+func TestSerializeTransactionsSameRow_TooManyPendingRequests(t *testing.T) {
+	// This test is similar to TestSerializeTransactionsSameRow, but tests only
+	// that there must not be too many pending BeginExecute() requests which are
+	// serialized.
+	// Since we start to queue before the transaction pool would queue, we need
+	// to enforce an upper limit as well to protect vttablet.
+	db := setUpTabletServerTest(t)
+	defer db.Close()
+	testUtils := newTestUtils()
+	config := testUtils.newQueryServiceConfig()
+	// The limit for pending same-row transactions is the same as the tx pool size.
+	config.TransactionCap = 1
+	tsv := NewTabletServerWithNilTopoServer(config)
+	dbconfigs := testUtils.newDBConfigs(db)
+	target := querypb.Target{TabletType: topodatapb.TabletType_MASTER}
+	if err := tsv.StartService(target, dbconfigs, testUtils.newMysqld(&dbconfigs)); err != nil {
+		t.Fatalf("StartService failed: %v", err)
+	}
+	defer tsv.StopService()
+	countStart := tabletenv.WaitStats.Counts()["TxSerializer"]
+
+	// Fake data.
+	q1 := "update test_table set name_string = 'tx1' where pk = :pk and name = :name"
+	q2 := "update test_table set name_string = 'tx2' where pk = :pk and name = :name"
+	bvPk1 := map[string]interface{}{
+		"pk":   1,
+		"name": 1,
+	}
+
+	// Make sure that tx2 starts only after tx1 is running its Execute().
+	tx1Started := make(chan struct{})
+	// Signal when tx2 is done.
+	tx2Failed := make(chan struct{})
+
+	r, ok := db.ExpectedResult("update test_table set name_string = 'tx1' where pk in (1) /* _stream test_table (pk ) (1 ); */")
+	if !ok {
+		t.Fatal("query for tx1 not registered")
+	}
+	r.SetBeforeFunc(func() {
+		close(tx1Started)
+		<-tx2Failed
+	})
+
+	// Run the two transactions.
+	ctx := context.Background()
+	wg := sync.WaitGroup{}
+
+	// tx1.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		_, tx1, err := tsv.BeginExecute(ctx, &target, q1, bvPk1, nil)
+		if err != nil {
+			t.Fatalf("failed to execute query: %s: %s", q1, err)
+		}
+		if err := tsv.Commit(ctx, &target, tx1); err != nil {
+			t.Fatalf("call TabletServer.Commit failed: %v", err)
+		}
+	}()
+
+	// tx2.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(tx2Failed)
+
+		<-tx1Started
+		_, _, err := tsv.BeginExecute(ctx, &target, q2, bvPk1, nil)
+		if err == nil || vterrors.Code(err) != vtrpcpb.Code_RESOURCE_EXHAUSTED || err.Error() != "too many pending requests for the same row (table + WHERE clause: test_table where pk = 1 and name = 1)" {
+			t.Fatalf("tx2 should have failed because there are two many pending requests: %v", err)
+		}
+		// No commit necessary because the Begin failed.
+	}()
+
+	wg.Wait()
+
+	got, _ := tabletenv.WaitStats.Counts()["TxSerializer"]
+	want := countStart + 0
+	if got != want {
+		t.Fatalf("tx2 should have failed early and not tracked as serialized: ok? %v got: %v want: %v", ok, got, want)
 	}
 }
 
@@ -2131,6 +2189,36 @@ func checkTabletServerState(t *testing.T, tsv *TabletServer, expectState int64) 
 
 func getSupportedQueries() map[string]*sqltypes.Result {
 	return map[string]*sqltypes.Result{
+		// Queries for transaction serializer.
+		"update test_table set name_string = 'tx1' where pk in (1) /* _stream test_table (pk ) (1 ); */": {
+			RowsAffected: 1,
+		},
+		"update test_table set name_string = 'tx2' where pk in (1) /* _stream test_table (pk ) (1 ); */": {
+			RowsAffected: 1,
+		},
+		"update test_table set name_string = 'tx3' where pk in (2) /* _stream test_table (pk ) (2 ); */": {
+			RowsAffected: 1,
+		},
+		// Complex WHERE clause requires SELECT of primary key first.
+		"select pk from test_table where pk = 1 and name = 1 limit 10001 for update": {
+			Fields: []*querypb.Field{
+				{Type: sqltypes.Int64},
+			},
+			RowsAffected: 1,
+			Rows: [][]sqltypes.Value{{
+				sqltypes.MakeString([]byte("1")),
+			}},
+		},
+		// Complex WHERE clause requires SELECT of primary key first.
+		"select pk from test_table where pk = 2 and name = 1 limit 10001 for update": {
+			Fields: []*querypb.Field{
+				{Type: sqltypes.Int64},
+			},
+			RowsAffected: 1,
+			Rows: [][]sqltypes.Value{{
+				sqltypes.MakeString([]byte("2")),
+			}},
+		},
 		// queries for twopc
 		sqlTurnoffBinlog:                                  {},
 		fmt.Sprintf(sqlCreateSidecarDB, "`_vt`"):          {},

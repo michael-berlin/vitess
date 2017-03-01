@@ -89,6 +89,9 @@ type TabletServer struct {
 	QueryTimeout sync2.AtomicDuration
 	BeginTimeout sync2.AtomicDuration
 	TerseErrors  bool
+	// txSerializerLimit is the maximum number of pending requests which we allow
+	// to be blocked waiting for another transaction which works on the same row.
+	txSerializerLimit int
 
 	// mu is used to access state. The lock should only be held
 	// for short periods. For longer periods, you have to transition
@@ -175,6 +178,7 @@ func NewTabletServer(config tabletenv.TabletConfig, topoServer topo.Server) *Tab
 		QueryTimeout:        sync2.NewAtomicDuration(time.Duration(config.QueryTimeout * 1e9)),
 		BeginTimeout:        sync2.NewAtomicDuration(time.Duration(config.TxPoolTimeout * 1e9)),
 		TerseErrors:         config.TerseErrors,
+		txSerializerLimit:   config.TransactionCap,
 		checkMySQLThrottler: sync2.NewSemaphore(1, 0),
 		streamHealthMap:     make(map[int]chan<- *querypb.StreamHealthResponse),
 		history:             history.New(10),
@@ -931,26 +935,41 @@ func (tsv *TabletServer) BeginExecute(ctx context.Context, target *querypb.Targe
 		// been called. Due to the additional MySQL locking, this should result into
 		// two transaction pool slots per row at most. (This transaction pending on
 		// COMMIT, the next one waiting for MySQL in BEGIN+EXECUTE.)
-		q, ok := tsv.qe.txSerializer.Create(k)
-		if ok {
-			// No other pending query. Start a new transaction below.
-			defer q.Broadcast()
-		} else {
-			startTime := time.Now()
-			waitDone := make(chan struct{})
-			go func() {
-				q.Wait()
-				close(waitDone)
-			}()
 
-			// Block until the context is done or the query of the other transaction
-			// has finished.
-			select {
-			case <-ctx.Done():
-				tabletenv.WaitStats.Record("TxSerializer", startTime)
-				return nil, 0, ctx.Err()
-			case <-waitDone:
-				tabletenv.WaitStats.Record("TxSerializer", startTime)
+		// Run until CreateWithLimit() succeeded for us or the context has finished.
+		// This loop is necessary because Broadcast() is going to unblock *all*
+		// waiting requests.
+		for {
+			q, ok, limited := tsv.qe.txSerializer.CreateWithLimit(k, tsv.txSerializerLimit)
+			if limited {
+				// Pending RPCs is a limited resource. Avoid that we queue up too many.
+				return nil, 0, vterrors.Errorf(vtrpcpb.Code_RESOURCE_EXHAUSTED,
+					"too many pending requests for the same row (table + WHERE clause: %v)", k)
+			}
+			if ok {
+				// No other pending request or we got lucky.
+				defer q.Broadcast()
+				// Start a new transaction below.
+				break
+			} else {
+				startTime := time.Now()
+				waitDone := make(chan struct{})
+				go func() {
+					q.Wait()
+					close(waitDone)
+				}()
+
+				// Block until the context is done or the query of the other transaction
+				// has finished.
+				select {
+				case <-ctx.Done():
+					// TODO(mberlin): Decrement q.pending or done requests remain counted
+					// until q.Broadcast() is called by the transaction in flight.
+					tabletenv.WaitStats.Record("TxSerializer", startTime)
+					return nil, 0, ctx.Err()
+				case <-waitDone:
+					tabletenv.WaitStats.Record("TxSerializer", startTime)
+				}
 			}
 		}
 	}

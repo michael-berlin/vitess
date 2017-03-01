@@ -32,7 +32,10 @@ type Result struct {
 	// executing is used to block additional requests.
 	// The original request holds a write lock while additional ones are blocked
 	// on acquiring a read lock (see Wait() below.)
-	executing    sync.RWMutex
+	executing sync.RWMutex
+	// pending is the number of requests blocked on this (This includes the
+	// original request which holds the write lock.)
+	pending      int
 	consolidator *Consolidator
 	query        string
 	Result       interface{}
@@ -43,15 +46,26 @@ type Result struct {
 // lock on its Result if it is not already present. If the query is
 // a duplicate, Create returns false.
 func (co *Consolidator) Create(query string) (r *Result, created bool) {
+	r, ok, _ := co.CreateWithLimit(query, -1)
+	return r, ok
+}
+
+// CreateWithLimit returns an additional bool which is true if there are already
+// "limit" pending requests waiting.
+func (co *Consolidator) CreateWithLimit(query string, limit int) (r *Result, created, limited bool) {
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	if r, ok := co.queries[query]; ok {
-		return r, false
+		if limit != -1 && r.pending >= limit {
+			return nil, false, true
+		}
+		r.pending++
+		return r, false, false
 	}
-	r = &Result{consolidator: co, query: query}
+	r = &Result{consolidator: co, query: query, pending: 1}
 	r.executing.Lock()
 	co.queries[query] = r
-	return r, true
+	return r, true, false
 }
 
 // QueryCountForTesting returns how many requests are in progress for a query.

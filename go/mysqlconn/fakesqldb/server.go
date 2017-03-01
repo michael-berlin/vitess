@@ -290,6 +290,16 @@ func (db *DB) AddQuery(query string, expectedResult *sqltypes.Result) *ExpectedR
 	return r
 }
 
+// ExpectedResult returns the registered result for "query".
+// It is useful to call WithBeforeFunc() on the result.
+func (db *DB) ExpectedResult(query string) (*ExpectedResult, bool) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	key := strings.ToLower(query)
+	r, ok := db.data[key]
+	return r, ok
+}
+
 // AddQueryPattern adds an expected result for a set of queries.
 // These patterns are checked if no exact matches from AddQuery() are found.
 // This function forces the addition of begin/end anchors (^$) and turns on
