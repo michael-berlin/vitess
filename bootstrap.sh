@@ -139,12 +139,7 @@ gotools=" \
 
 # The cover tool needs to be installed into the Go toolchain, so it will fail
 # if Go is installed somewhere that requires root access.
-source tools/shell_functions.inc
-if goversion_min 1.4; then
-  gotools+=" golang.org/x/tools/cmd/cover"
-else
-  gotools+=" code.google.com/p/go.tools/cmd/cover"
-fi
+gotools+=" golang.org/x/tools/cmd/cover"
 
 echo "Installing dev tools with 'go get'..."
 go get -u $gotools || fail "Failed to download some Go tools with 'go get'. Please re-run bootstrap.sh in case of transient errors."
