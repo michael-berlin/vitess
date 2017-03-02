@@ -1667,6 +1667,93 @@ func TestSerializeTransactionsSameRow_TooManyPendingRequests(t *testing.T) {
 	}
 }
 
+func TestSerializeTransactionsSameRow_RequestCanceled(t *testing.T) {
+	// This test is similar to TestSerializeTransactionsSameRow, but tests only
+	// that a queued request unblocks itself when its context is done.
+	db := setUpTabletServerTest(t)
+	defer db.Close()
+	testUtils := newTestUtils()
+	config := testUtils.newQueryServiceConfig()
+	config.TransactionCap = 2
+	tsv := NewTabletServerWithNilTopoServer(config)
+	dbconfigs := testUtils.newDBConfigs(db)
+	target := querypb.Target{TabletType: topodatapb.TabletType_MASTER}
+	if err := tsv.StartService(target, dbconfigs, testUtils.newMysqld(&dbconfigs)); err != nil {
+		t.Fatalf("StartService failed: %v", err)
+	}
+	defer tsv.StopService()
+	countStart := tabletenv.WaitStats.Counts()["TxSerializer"]
+
+	// Fake data.
+	q1 := "update test_table set name_string = 'tx1' where pk = :pk and name = :name"
+	q2 := "update test_table set name_string = 'tx2' where pk = :pk and name = :name"
+	bvPk1 := map[string]interface{}{
+		"pk":   1,
+		"name": 1,
+	}
+
+	// Make sure that tx2 starts only after tx1 is running its Execute().
+	tx1Started := make(chan struct{})
+	// Signal when tx2 is done.
+	tx2Failed := make(chan struct{})
+
+	r, ok := db.ExpectedResult("update test_table set name_string = 'tx1' where pk in (1) /* _stream test_table (pk ) (1 ); */")
+	if !ok {
+		t.Fatal("query for tx1 not registered")
+	}
+	r.SetBeforeFunc(func() {
+		close(tx1Started)
+		<-tx2Failed
+	})
+
+	// Run the two transactions.
+	ctx := context.Background()
+	wg := sync.WaitGroup{}
+
+	// tx1.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		_, tx1, err := tsv.BeginExecute(ctx, &target, q1, bvPk1, nil)
+		if err != nil {
+			t.Fatalf("failed to execute query: %s: %s", q1, err)
+		}
+		if err := tsv.Commit(ctx, &target, tx1); err != nil {
+			t.Fatalf("call TabletServer.Commit failed: %v", err)
+		}
+	}()
+
+	// tx2.
+	ctxTx2, cancelTx2 := context.WithCancel(ctx)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(tx2Failed)
+
+		<-tx1Started
+		_, _, err := tsv.BeginExecute(ctxTx2, &target, q2, bvPk1, nil)
+		if err == nil || vterrors.Code(err) != vtrpcpb.Code_CANCELED || err.Error() != "context canceled" {
+			t.Fatalf("tx2 should have failed because there are two many pending requests: %v", err)
+		}
+		// No commit necessary because the Begin failed.
+	}()
+
+	if err := waitForTxSerializationCount(tsv, "test_table where pk = 1 and name = 1", 1); err != nil {
+		t.Fatal(err)
+	}
+	// tx2 is queued. Now unblock and cancel it.
+	cancelTx2()
+
+	wg.Wait()
+
+	got, _ := tabletenv.WaitStats.Counts()["TxSerializer"]
+	want := countStart + 0
+	if got != want {
+		t.Fatalf("tx2 should have failed early and not tracked as serialized: ok? %v got: %v want: %v", ok, got, want)
+	}
+}
+
 func TestMessageStream(t *testing.T) {
 	_, tsv, db := newTestTxExecutor(t)
 	defer db.Close()

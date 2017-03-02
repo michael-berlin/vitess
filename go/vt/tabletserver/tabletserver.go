@@ -923,7 +923,12 @@ func (tsv *TabletServer) ExecuteBatch(ctx context.Context, target *querypb.Targe
 
 // BeginExecute combines Begin and Execute.
 func (tsv *TabletServer) BeginExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions) (*sqltypes.Result, int64, error) {
-	if k := tsv.computeTxSerializerKey(ctx, sql, bindVariables); k != "" {
+	// Check if this query needs to go through the tx serialization/hot row protection.
+	logStats := tabletenv.NewLogStats(ctx, "waitForSameRowTransactions")
+	logStats.Target = target
+	logStats.OriginalSQL = sql
+	logStats.BindVariables = bindVariables
+	if k := tsv.computeTxSerializerKey(ctx, logStats, sql, bindVariables); k != "" {
 		// Serialize the creation of new transactions *if* the first
 		// UPDATE or DELETE query has the same WHERE clause as a query which is
 		// already running in a transaction (only other BeginExecute() calls are
@@ -942,34 +947,35 @@ func (tsv *TabletServer) BeginExecute(ctx context.Context, target *querypb.Targe
 		for {
 			q, ok, limited := tsv.qe.txSerializer.CreateWithLimit(k, tsv.txSerializerLimit)
 			if limited {
+				// TODO(mberlin): Use: tsv.convertAndLogError
 				// Pending RPCs is a limited resource. Avoid that we queue up too many.
 				return nil, 0, vterrors.Errorf(vtrpcpb.Code_RESOURCE_EXHAUSTED,
 					"too many pending requests for the same row (table + WHERE clause: %v)", k)
 			}
 			if ok {
-				// No other pending request or we got lucky.
+				// No other pending request or we got lucky. Unblock others at the end.
 				defer q.Broadcast()
-				// Start a new transaction below.
+				// Continue with the query below.
 				break
-			} else {
-				startTime := time.Now()
-				waitDone := make(chan struct{})
-				go func() {
-					q.Wait()
-					close(waitDone)
-				}()
+			}
 
-				// Block until the context is done or the query of the other transaction
-				// has finished.
-				select {
-				case <-ctx.Done():
-					// TODO(mberlin): Decrement q.pending or done requests remain counted
-					// until q.Broadcast() is called by the transaction in flight.
-					tabletenv.WaitStats.Record("TxSerializer", startTime)
-					return nil, 0, ctx.Err()
-				case <-waitDone:
-					tabletenv.WaitStats.Record("TxSerializer", startTime)
-				}
+			startTime := time.Now()
+			waitDone := make(chan struct{})
+			go func() {
+				q.Wait()
+				close(waitDone)
+			}()
+
+			// Block until the context is done or the query of the other transaction
+			// has finished.
+			select {
+			case <-ctx.Done():
+				// TODO(mberlin): Decrement q.pending or done requests remain counted
+				// until q.Broadcast() is called by the transaction in flight.
+				tabletenv.WaitStats.Record("TxSerializer", startTime)
+				return nil, 0, tsv.convertAndLogError(sql, bindVariables, ctx.Err(), logStats)
+			case <-waitDone:
+				tabletenv.WaitStats.Record("TxSerializer", startTime)
 			}
 		}
 	}
@@ -987,11 +993,9 @@ func (tsv *TabletServer) BeginExecute(ctx context.Context, target *querypb.Targe
 // queries would update the same row (range).
 // It returns an empty string if this feature is disabled or if the query row
 // (range) cannot be parsed from the query and bind variables or this .
-func (tsv *TabletServer) computeTxSerializerKey(ctx context.Context, sql string, bindVariables map[string]interface{}) string {
+func (tsv *TabletServer) computeTxSerializerKey(ctx context.Context, logStats *tabletenv.LogStats, sql string, bindVariables map[string]interface{}) string {
 	// TODO(mberlin): Add query service config to disable this feature.
 
-	// We only create logStats for GetPlan() and don't use it otherwise.
-	logStats := tabletenv.NewLogStats(ctx, "waitForSameRowTransactions")
 	plan, err := tsv.qe.GetPlan(ctx, logStats, sql)
 	if err != nil {
 		logComputeRowSerializerKey.Errorf("failed to get plan for query: %v err: %v", sql, err)
