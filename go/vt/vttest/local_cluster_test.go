@@ -5,7 +5,6 @@
 package vttest
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	_ "github.com/youtube/vitess/go/mysql"
 
 	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	vschemapb "github.com/youtube/vitess/go/vt/proto/vschema"
 	vttestpb "github.com/youtube/vitess/go/vt/proto/vttest"
 )
 
@@ -35,8 +35,32 @@ func TestVitess(t *testing.T) {
 			},
 		},
 	}
+	schema := `CREATE TABLE messages (
+	  page BIGINT(20) UNSIGNED,
+	  time_created_ns BIGINT(20) UNSIGNED,
+	  message VARCHAR(10000),
+	  PRIMARY KEY (page, time_created_ns)
+	) ENGINE=InnoDB`
+	vschema := &vschemapb.Keyspace{
+		Sharded: true,
+		Vindexes: map[string]*vschemapb.Vindex{
+			"hash": {
+				Type: "hash",
+			},
+		},
+		Tables: map[string]*vschemapb.Table{
+			"table1": {
+				ColumnVindexes: []*vschemapb.ColumnVindex{
+					{
+						Column: "page",
+						Name:   "hash",
+					},
+				},
+			},
+		},
+	}
 
-	hdl, err := LaunchVitess(ProtoTopo(topology))
+	hdl, err := LaunchVitess(ProtoTopo(topology), Schema(schema), VSchema(vschema))
 	if err != nil {
 		t.Error(err)
 		return
@@ -48,27 +72,19 @@ func TestVitess(t *testing.T) {
 			return
 		}
 	}()
-	if hdl.Data == nil {
-		t.Error("map is nil")
-		return
-	}
-	portName := "port"
-	if vtgateProtocol() == "grpc" {
-		portName = "grpc_port"
-	}
-	fport, ok := hdl.Data[portName]
-	if !ok {
-		t.Errorf("port %v not found in map", portName)
-		return
-	}
-	port := int(fport.(float64))
 	ctx := context.Background()
-	conn, err := vtgateconn.DialProtocol(ctx, vtgateProtocol(), fmt.Sprintf("localhost:%d", port), 5*time.Second, "")
+	conn, err := vtgateconn.DialProtocol(ctx, vtgateProtocol(), hdl.VtgateAddress(), 5*time.Second, "")
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	_, err = conn.ExecuteShards(ctx, "select 1 from dual", "test_keyspace", []string{"0"}, nil, topodatapb.TabletType_MASTER, nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	// Test that vtgate can use the VSchema to route the query to the keyspace.
+	_, err = conn.Execute(ctx, "select * from messages", nil, topodatapb.TabletType_MASTER, nil)
 	if err != nil {
 		t.Error(err)
 		return
