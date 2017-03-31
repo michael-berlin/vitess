@@ -1,5 +1,6 @@
 package io.vitess.client;
 
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.protobuf.ByteString;
@@ -30,6 +31,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import org.joda.time.DateTime;
 import org.joda.time.Duration;
 import org.junit.Assert;
 import org.junit.Before;
@@ -49,10 +52,17 @@ public abstract class RpcClientTest {
   private VTGateBlockingConn conn;
 
   @Before
-  public void setUp() {
-    ctx = Context.getDefault().withDeadlineAfter(Duration.millis(5000)).withCallerId(CALLER_ID);
+  public void setUp() throws SQLException, InterruptedException {
     // Test VTGateConn via the synchronous VTGateBlockingConn wrapper.
     conn = new VTGateBlockingConn(client, KEYSPACE);
+
+    waitForVtgateclienttest();
+
+    // Cap the test execution to 5 seconds by using a shared Context with a deadline.
+    // (RPCs will fail with DEADLINE_EXCEEDED if they keep using "ctx" 5 seconds from now.)
+    // Note: Sharing a Context is not common. Usually, each RPC invocation should have its own
+    // Context instance. Exceptions from this rule are Context.getDefault() for example.
+    ctx = Context.getDefault().withDeadlineAfter(Duration.standardSeconds(5)).withCallerId(CALLER_ID);
   }
 
   private static final String ECHO_PREFIX = "echo://";
@@ -142,6 +152,45 @@ public abstract class RpcClientTest {
     Assert.assertEquals("", values.get("emptyString"));
 
     return values;
+  }
+
+  /**
+   * waitForVtgateclienttest blocks until the "vtgateclienttest" binary is reachable via RPC.
+   *
+   * We will constantly execute the "GetSrvKeyspace" RPC and return when the binary responded
+   * successfully.
+   *
+   * @throws SQLException
+   * @throws InterruptedException
+   */
+  private void waitForVtgateclienttest() throws SQLException, InterruptedException {
+    DateTime start = DateTime.now();
+    DateTime deadline = start.plusSeconds(60);
+
+    boolean waited = false;
+    while (DateTime.now().isBefore(deadline)) {
+      try {
+        ctx = Context.getDefault().withDeadlineAfter(Duration.standardSeconds(4));
+        conn.getSrvKeyspace(ctx, "small");
+        // RPC succeeded. Stop testing.
+        break;
+      } catch (SQLTransientException e) {
+        Throwable rootCause = Throwables.getRootCause(e);
+        if (!rootCause.getMessage().contains("Connection refused: ")) {
+          // Non-retryable exception. Fail for good.
+          throw e;
+        }
+
+        System.out.format("Waiting until vtgateclienttest is ready and responds (got exception: %s)\n", rootCause);
+        Thread.sleep(TimeUnit.MILLISECONDS.toMillis(100));
+        waited = true;
+      }
+    }
+
+    if (waited) {
+      double waitTimeSeconds = (DateTime.now().getMillis() - start.getMillis()) / 1000.0;
+      System.out.format("Had to wait %.1f second(s) until vtgateclienttest was ready.\n", waitTimeSeconds);
+    }
   }
 
   @Test
