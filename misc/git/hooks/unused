@@ -18,7 +18,9 @@ gofiles=$(git diff --cached --name-only --diff-filter=ACM | grep '^go/.*\.go$' |
 if [ "$gofiles" = "" ]; then
   exit 0
 fi
-gopackages=$(echo $gofiles | xargs dirname | sort -u)
+gopackages=$(for i in $gofiles; do
+  dirname $i
+done | sort -u)
 
 warnings=
 
