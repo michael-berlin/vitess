@@ -164,17 +164,22 @@ func (t *TxSerializer) lockLocked(ctx context.Context, key, table string) (bool,
 		}
 	}
 
-	t.globalSize++
-	q.size++
-	q.count++
-	if q.size == 2 && q.max == 1 {
-		// Hot row detected: A second, concurrent transaction is seen for the first
-		// time.
+	if q.availableSlots == nil {
+		// Hot row detected: A second, concurrent transaction is seen for the
+		// first time.
+
+		// As an optimization, we deferred the creation of the channel until now.
+		q.availableSlots = make(chan struct{}, t.concurrentTransactions)
+		q.availableSlots <- struct{}{}
 
 		// Include first transaction in the count at /debug/hotrows. (It was not
 		// recorded on purpose because it did not wait.)
 		t.Record(key)
 	}
+
+	t.globalSize++
+	q.size++
+	q.count++
 	if q.size > q.max {
 		q.max = q.size
 	}
@@ -240,10 +245,24 @@ func (t *TxSerializer) unlockLocked(key string, returnSlot bool) {
 
 	// Give up slot by removing ourselves from the channel.
 	// Wakes up the next queued transaction.
-	if !t.dryRun && returnSlot {
-		// This should never block.
-		<-q.availableSlots
+
+	if t.dryRun {
+		// Dry-run did not acquire a slot in the first place.
+		return
 	}
+
+	if !returnSlot {
+		// We did not acquire a slot in the first place e.g. due to a canceled context.
+		return
+	}
+
+	if q.availableSlots == nil {
+		// There was no other transaction. As an optimization, we did not create the channel.
+		return
+	}
+
+	// This should never block.
+	<-q.availableSlots
 }
 
 // Pending returns the number of queued transactions (including the ones which
@@ -283,16 +302,15 @@ type queue struct {
 	// transaction i.e. consumed tx pool slot. Consequently, if the channel
 	// is full, subsequent transactions have to wait until they can place
 	// their entry here.
+	// NOTE: As an optimization, we defer the creation of the channel until
+	// a second transaction for the same hot row is running.
 	availableSlots chan struct{}
 }
 
 func newQueueForFirstTransaction(concurrentTransactions int) *queue {
-	availableSlots := make(chan struct{}, concurrentTransactions)
-	availableSlots <- struct{}{}
 	return &queue{
-		size:           1,
-		count:          1,
-		max:            1,
-		availableSlots: availableSlots,
+		size:  1,
+		count: 1,
+		max:   1,
 	}
 }
