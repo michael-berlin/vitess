@@ -1,11 +1,23 @@
 package prometheusbackend
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"vitess.io/vitess/go/stats"
 )
+
+func kindToValueType(kind stats.MetricKind) prometheus.ValueType {
+	switch kind {
+	case stats.MetricKind_Counter:
+		return prometheus.CounterValue
+	case stats.MetricKind_Gauge:
+		return prometheus.GaugeValue
+	default:
+		panic(fmt.Sprintf("unknown stats.MetricKind: %#v", kind))
+	}
+}
 
 type metricFuncCollector struct {
 	// f returns the floating point value of the metric.
@@ -21,110 +33,35 @@ func (mc *metricFuncCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements Collector.
 func (mc *metricFuncCollector) Collect(ch chan<- prometheus.Metric) {
-	ch <- prometheus.MustNewConstMetric(mc.desc, mc.vt, float64(mc.f()))
+	ch <- prometheus.MustNewConstMetric(
+		mc.desc,
+		mc.vt,
+		float64(mc.f()))
 }
 
-// countersWithSingleLabelCollector collects stats.CountersWithSingleLabel.
-type countersWithSingleLabelCollector struct {
-	counters *stats.CountersWithSingleLabel
-	desc     *prometheus.Desc
-	vt       prometheus.ValueType
+type storedIntCollector struct {
+	metric *stats.StoredInt
+	desc   *prometheus.Desc
 }
 
 // Describe implements Collector.
-func (c *countersWithSingleLabelCollector) Describe(ch chan<- *prometheus.Desc) {
+func (c *storedIntCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.desc
 }
 
 // Collect implements Collector.
-func (c *countersWithSingleLabelCollector) Collect(ch chan<- prometheus.Metric) {
-	for tag, val := range c.counters.Counts() {
+func (c *storedIntCollector) Collect(ch chan<- prometheus.Metric) {
+	for joinedLabelValues, value := range c.metric.Counts() {
+		fmt.Println(joinedLabelValues, value)
+		var labelValues []string
+		if joinedLabelValues != stats.UnlabeledValueKey {
+			labelValues = strings.Split(joinedLabelValues, ".")
+		}
 		ch <- prometheus.MustNewConstMetric(
 			c.desc,
-			c.vt,
-			float64(val),
-			tag)
-	}
-}
-
-// gaugesWithSingleLabelCollector collects stats.GaugesWithSingleLabel.
-type gaugesWithSingleLabelCollector struct {
-	gauges *stats.GaugesWithSingleLabel
-	desc   *prometheus.Desc
-	vt     prometheus.ValueType
-}
-
-// Describe implements Collector.
-func (g *gaugesWithSingleLabelCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- g.desc
-}
-
-// Collect implements Collector.
-func (g *gaugesWithSingleLabelCollector) Collect(ch chan<- prometheus.Metric) {
-	for tag, val := range g.gauges.Counts() {
-		ch <- prometheus.MustNewConstMetric(
-			g.desc,
-			g.vt,
-			float64(val),
-			tag)
-	}
-}
-
-type metricWithMultiLabelsCollector struct {
-	cml  *stats.CountersWithMultiLabels
-	desc *prometheus.Desc
-}
-
-// Describe implements Collector.
-func (c *metricWithMultiLabelsCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- c.desc
-}
-
-// Collect implements Collector.
-func (c *metricWithMultiLabelsCollector) Collect(ch chan<- prometheus.Metric) {
-	for lvs, val := range c.cml.Counts() {
-		labelValues := strings.Split(lvs, ".")
-		value := float64(val)
-		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, value, labelValues...)
-	}
-}
-
-type multiGaugesCollector struct {
-	gml  *stats.GaugesWithMultiLabels
-	desc *prometheus.Desc
-}
-
-// Describe implements Collector.
-func (c *multiGaugesCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- c.desc
-}
-
-// Collect implements Collector.
-func (c *multiGaugesCollector) Collect(ch chan<- prometheus.Metric) {
-	for lvs, val := range c.gml.Counts() {
-		labelValues := strings.Split(lvs, ".")
-		value := float64(val)
-		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, value, labelValues...)
-	}
-}
-
-type metricsFuncWithMultiLabelsCollector struct {
-	cfml *stats.CountersFuncWithMultiLabels
-	desc *prometheus.Desc
-	vt   prometheus.ValueType
-}
-
-// Describe implements Collector.
-func (c *metricsFuncWithMultiLabelsCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- c.desc
-}
-
-// Collect implements Collector.
-func (c *metricsFuncWithMultiLabelsCollector) Collect(ch chan<- prometheus.Metric) {
-	for lvs, val := range c.cfml.Counts() {
-		labelValues := strings.Split(lvs, ".")
-		value := float64(val)
-		ch <- prometheus.MustNewConstMetric(c.desc, c.vt, value, labelValues...)
+			kindToValueType(c.metric.Kind()),
+			float64(value),
+			labelValues...)
 	}
 }
 

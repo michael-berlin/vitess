@@ -16,14 +16,48 @@ limitations under the License.
 
 package stats
 
-// Variable is the minimal interface which each type in this "stats" package
+type MetricKind int
+
+const (
+	_ MetricKind = iota
+	MetricKind_Counter
+	MetricKind_Gauge
+)
+
+// Metric is the minimal interface which each type in this "stats" package
 // must implement.
 // When integrating the Vitess stats types ("variables") with the different
 // monitoring systems, you can rely on this interface.
-type Variable interface {
+type Metric interface {
 	// Help returns the description of the variable.
 	Help() string
 
+	Kind() MetricKind
+
+	Labels() []string
+
 	// String must implement String() from the expvar.Var interface.
 	String() string
+
+	ResetAll()
+}
+
+type metric struct {
+	help string
+
+	kind MetricKind
+
+	labels []string
+}
+
+func (m metric) Help() string {
+	return m.help
+}
+
+func (m metric) Kind() MetricKind {
+	return m.kind
+}
+
+func (m metric) Labels() []string {
+	return m.labels
 }

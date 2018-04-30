@@ -42,19 +42,19 @@ func TestRates(t *testing.T) {
 	}
 
 	clear()
-	c := NewCountersWithSingleLabel("rcounter1", "rcounter help", "label")
+	c := NewCounter("rcounter1", "rcounter help", "label")
 	r := NewRates("rates1", c, 3, -1*time.Second)
 	r.snapshot()
 	now = now.Add(epsilon)
-	c.Add("tag1", 0)
-	c.Add("tag2", 0)
+	c.Add(0, "tag1")
+	c.Add(0, "tag2")
 	now = now.Add(intervalMinusEpsilon)
 	r.snapshot()
 	now = now.Add(epsilon)
 	checkRates(t, r, "after 1s", 0.0, `{"tag1":[0],"tag2":[0]}`)
 
-	c.Add("tag1", 10)
-	c.Add("tag2", 20)
+	c.Add(10, "tag1")
+	c.Add(20, "tag2")
 	now = now.Add(intervalMinusEpsilon)
 	r.snapshot()
 	now = now.Add(epsilon)
@@ -90,16 +90,16 @@ func TestRatesConsistency(t *testing.T) {
 	// covered by rates, the sum of the rates reported must be
 	// equal to the count reported by the counter.
 	clear()
-	c := NewCountersWithSingleLabel("rcounter4", "rcounter4 help", "label")
+	c := NewCounter("rcounter4", "rcounter4 help", "label")
 	r := NewRates("rates4", c, 100, -1*time.Second)
 	r.snapshot()
 
 	now = now.Add(epsilon)
-	c.Add("a", 1000)
+	c.Add(1000, "a")
 	now = now.Add(intervalMinusEpsilon)
 	r.snapshot()
 	now = now.Add(epsilon)
-	c.Add("a", 1)
+	c.Add(1, "a")
 	now = now.Add(intervalMinusEpsilon)
 	r.snapshot()
 	now = now.Add(epsilon)
@@ -123,7 +123,7 @@ func TestRatesConsistency(t *testing.T) {
 
 func TestRatesHook(t *testing.T) {
 	clear()
-	c := NewCountersWithSingleLabel("rcounter2", "rcounter2 help", "label")
+	c := NewCounter("rcounter2", "rcounter2 help", "label")
 	var gotname string
 	var gotv *Rates
 	clear()

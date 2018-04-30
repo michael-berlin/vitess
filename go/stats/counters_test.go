@@ -18,19 +18,16 @@ package stats
 
 import (
 	"expvar"
-	"math/rand"
 	"reflect"
-	"sort"
 	"testing"
-	"time"
 )
 
-func TestCounters(t *testing.T) {
+func TestCounter(t *testing.T) {
 	clear()
-	c := NewCountersWithSingleLabel("counter1", "help", "label")
-	c.Add("c1", 1)
-	c.Add("c2", 1)
-	c.Add("c2", 1)
+	c := NewCounter("counter1", "help", "label1")
+	c.Add(1, "c1")
+	c.Add(1, "c2")
+	c.Add(1, "c2")
 	want1 := `{"c1": 1, "c2": 2}`
 	want2 := `{"c2": 2, "c1": 1}`
 	if s := c.String(); s != want1 && s != want2 {
@@ -47,27 +44,58 @@ func TestCounters(t *testing.T) {
 
 func TestCountersTags(t *testing.T) {
 	clear()
-	c := NewCountersWithSingleLabel("counterTag1", "help", "label")
+	c := NewCounter("counterTag1", "help")
 	want := map[string]int64{}
 	got := c.Counts()
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("want %v, got %v", want, got)
 	}
 
-	c = NewCountersWithSingleLabel("counterTag2", "help", "label", "tag1", "tag2")
-	want = map[string]int64{"tag1": 0, "tag2": 0}
+	c = NewCounter("counterTag2", "help", "label1").
+		InitializeCounterLabelValues("c1", "c2")
+	want = map[string]int64{"c1": 0, "c2": 0}
 	got = c.Counts()
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("want %v, got %v", want, got)
 	}
 }
 
+func TestCountersHook(t *testing.T) {
+	var gotname string
+	var gotv Counter
+	clear()
+	Register(func(name string, v expvar.Var) {
+		gotname = name
+		gotv = v.(Counter)
+	})
+
+	v := NewCounter("counter2", "help", "label1")
+	if gotname != "counter2" {
+		t.Errorf("want counter2, got %s", gotname)
+	}
+	if gotv != v {
+		t.Errorf("want %#v, got %#v", v, gotv)
+	}
+}
+
+func TestCounterTypeSwitch(t *testing.T) {
+	v := NewCounter("", "help", "label1")
+	switch v := v.(type) {
+	case *StoredInt:
+		if got, want := MetricKind_Counter, v.Kind(); got != want {
+			t.Errorf("wrong Kind for counter. got = %v, want = %v", got, want)
+		}
+	default:
+		t.Errorf("Counter has wrong type: %T", v)
+	}
+}
+
 func TestMultiCounters(t *testing.T) {
 	clear()
-	c := NewCountersWithMultiLabels("mapCounter1", "help", []string{"aaa", "bbb"})
-	c.Add([]string{"c1a", "c1b"}, 1)
-	c.Add([]string{"c2a", "c2b"}, 1)
-	c.Add([]string{"c2a", "c2b"}, 1)
+	c := NewCounter("mapCounter1", "help", []string{"aaa", "bbb"}...)
+	c.Add(1, []string{"c1a", "c1b"}...)
+	c.Add(1, []string{"c2a", "c2b"}...)
+	c.Add(1, []string{"c2a", "c2b"}...)
 	want1 := `{"c1a.c1b": 1, "c2a.c2b": 2}`
 	want2 := `{"c2a.c2b": 2, "c1a.c1b": 1}`
 	if s := c.String(); s != want1 && s != want2 {
@@ -80,158 +108,158 @@ func TestMultiCounters(t *testing.T) {
 	if counts["c2a.c2b"] != 2 {
 		t.Errorf("want 2, got %d", counts["c2a.c2b"])
 	}
-	f := NewCountersFuncWithMultiLabels("", "help", []string{"aaa", "bbb"}, func() map[string]int64 {
-		return map[string]int64{
-			"c1a.c1b": 1,
-			"c2a.c2b": 2,
-		}
-	})
-	if s := f.String(); s != want1 && s != want2 {
-		t.Errorf("want %s or %s, got %s", want1, want2, s)
-	}
+	//	f := NewCountersFuncWithMultiLabels("", "help", []string{"aaa", "bbb"}, func() map[string]int64 {
+	//		return map[string]int64{
+	//			"c1a.c1b": 1,
+	//			"c2a.c2b": 2,
+	//		}
+	//	})
+	//	if s := f.String(); s != want1 && s != want2 {
+	//		t.Errorf("want %s or %s, got %s", want1, want2, s)
+	//	}
 }
 
-func TestMultiCountersDot(t *testing.T) {
-	clear()
-	c := NewCountersWithMultiLabels("mapCounter2", "help", []string{"aaa", "bbb"})
-	c.Add([]string{"c1.a", "c1b"}, 1)
-	c.Add([]string{"c2a", "c2.b"}, 1)
-	c.Add([]string{"c2a", "c2.b"}, 1)
-	want1 := `{"c1\\.a.c1b": 1, "c2a.c2\\.b": 2}`
-	want2 := `{"c2a.c2\\.b": 2, "c1\\.a.c1b": 1}`
-	if s := c.String(); s != want1 && s != want2 {
-		t.Errorf("want %s or %s, got %s", want1, want2, s)
-	}
-	counts := c.Counts()
-	if counts["c1\\.a.c1b"] != 1 {
-		t.Errorf("want 1, got %d", counts["c1\\.a.c1b"])
-	}
-	if counts["c2a.c2\\.b"] != 2 {
-		t.Errorf("want 2, got %d", counts["c2a.c2\\.b"])
-	}
-}
+//func TestMultiCountersDot(t *testing.T) {
+//	clear()
+//	c := NewCountersWithMultiLabels("mapCounter2", "help", []string{"aaa", "bbb"})
+//	c.Add([]string{"c1.a", "c1b"}, 1)
+//	c.Add([]string{"c2a", "c2.b"}, 1)
+//	c.Add([]string{"c2a", "c2.b"}, 1)
+//	want1 := `{"c1\\.a.c1b": 1, "c2a.c2\\.b": 2}`
+//	want2 := `{"c2a.c2\\.b": 2, "c1\\.a.c1b": 1}`
+//	if s := c.String(); s != want1 && s != want2 {
+//		t.Errorf("want %s or %s, got %s", want1, want2, s)
+//	}
+//	counts := c.Counts()
+//	if counts["c1\\.a.c1b"] != 1 {
+//		t.Errorf("want 1, got %d", counts["c1\\.a.c1b"])
+//	}
+//	if counts["c2a.c2\\.b"] != 2 {
+//		t.Errorf("want 2, got %d", counts["c2a.c2\\.b"])
+//	}
+//}
 
-func TestCountersHook(t *testing.T) {
-	var gotname string
-	var gotv *CountersWithSingleLabel
-	clear()
-	Register(func(name string, v expvar.Var) {
-		gotname = name
-		gotv = v.(*CountersWithSingleLabel)
-	})
+//func TestMultiCountersHook(t *testing.T) {
+//	var gotname string
+//	var gotv *CountersWithMultiLabels
+//	clear()
+//	Register(func(name string, v expvar.Var) {
+//		gotname = name
+//		gotv = v.(*CountersWithMultiLabels)
+//	})
+//
+//	v := NewCountersWithMultiLabels("TestMultiCountersHook", "help", []string{"label1"})
+//	if gotname != "TestMultiCountersHook" {
+//		t.Errorf("want TestMultiCountersHook, got %s", gotname)
+//	}
+//	if gotv != v {
+//		t.Errorf("want %#v, got %#v", v, gotv)
+//	}
+//}
 
-	v := NewCountersWithSingleLabel("counter2", "help", "label")
-	if gotname != "counter2" {
-		t.Errorf("want counter2, got %s", gotname)
-	}
-	if gotv != v {
-		t.Errorf("want %#v, got %#v", v, gotv)
-	}
-}
+//var benchCounter = NewCountersWithSingleLabel("bench", "help", "label")
+//
+//func BenchmarkCounters(b *testing.B) {
+//	clear()
+//	benchCounter.Add("c1", 1)
+//	b.ResetTimer()
+//
+//	b.RunParallel(func(pb *testing.PB) {
+//		for pb.Next() {
+//			benchCounter.Add("c1", 1)
+//		}
+//	})
+//}
+//
+//var benchMultiCounter = NewCountersWithMultiLabels("benchMulti", "help", []string{"call", "keyspace", "dbtype"})
+//
+//func BenchmarkMultiCounters(b *testing.B) {
+//	clear()
+//	key := []string{"execute-key-ranges", "keyspacename", "replica"}
+//	benchMultiCounter.Add(key, 1)
+//	b.ResetTimer()
+//
+//	b.RunParallel(func(pb *testing.PB) {
+//		for pb.Next() {
+//			benchMultiCounter.Add(key, 1)
+//		}
+//	})
+//}
+//
+//func BenchmarkCountersTailLatency(b *testing.B) {
+//	// For this one, ignore the time reported by 'go test'.
+//	// The 99th Percentile log line is all that matters.
+//	// (Cmd: go test -bench=BenchmarkCountersTailLatency -benchtime=30s -cpu=10)
+//	clear()
+//	benchCounter.Add("c1", 1)
+//	c := make(chan time.Duration, 100)
+//	done := make(chan struct{})
+//	go func() {
+//		all := make([]int, b.N)
+//		i := 0
+//		for dur := range c {
+//			all[i] = int(dur)
+//			i++
+//		}
+//		sort.Ints(all)
+//		p99 := time.Duration(all[b.N*99/100])
+//		b.Logf("99th Percentile (for N=%v): %v", b.N, p99)
+//		close(done)
+//	}()
+//
+//	b.ResetTimer()
+//	b.SetParallelism(100) // The actual number of goroutines is 100*GOMAXPROCS
+//	b.RunParallel(func(pb *testing.PB) {
+//		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+//
+//		var start time.Time
+//
+//		for pb.Next() {
+//			// sleep between 0~200ms to simulate 10 QPS per goroutine.
+//			time.Sleep(time.Duration(r.Int63n(200)) * time.Millisecond)
+//			start = time.Now()
+//			benchCounter.Add("c1", 1)
+//			c <- time.Since(start)
+//		}
+//	})
+//	b.StopTimer()
+//
+//	close(c)
+//	<-done
+//}
 
-var benchCounter = NewCountersWithSingleLabel("bench", "help", "label")
-
-func BenchmarkCounters(b *testing.B) {
-	clear()
-	benchCounter.Add("c1", 1)
-	b.ResetTimer()
-
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			benchCounter.Add("c1", 1)
-		}
-	})
-}
-
-var benchMultiCounter = NewCountersWithMultiLabels("benchMulti", "help", []string{"call", "keyspace", "dbtype"})
-
-func BenchmarkMultiCounters(b *testing.B) {
-	clear()
-	key := []string{"execute-key-ranges", "keyspacename", "replica"}
-	benchMultiCounter.Add(key, 1)
-	b.ResetTimer()
-
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			benchMultiCounter.Add(key, 1)
-		}
-	})
-}
-
-func BenchmarkCountersTailLatency(b *testing.B) {
-	// For this one, ignore the time reported by 'go test'.
-	// The 99th Percentile log line is all that matters.
-	// (Cmd: go test -bench=BenchmarkCountersTailLatency -benchtime=30s -cpu=10)
-	clear()
-	benchCounter.Add("c1", 1)
-	c := make(chan time.Duration, 100)
-	done := make(chan struct{})
-	go func() {
-		all := make([]int, b.N)
-		i := 0
-		for dur := range c {
-			all[i] = int(dur)
-			i++
-		}
-		sort.Ints(all)
-		p99 := time.Duration(all[b.N*99/100])
-		b.Logf("99th Percentile (for N=%v): %v", b.N, p99)
-		close(done)
-	}()
-
-	b.ResetTimer()
-	b.SetParallelism(100) // The actual number of goroutines is 100*GOMAXPROCS
-	b.RunParallel(func(pb *testing.PB) {
-		r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-		var start time.Time
-
-		for pb.Next() {
-			// sleep between 0~200ms to simulate 10 QPS per goroutine.
-			time.Sleep(time.Duration(r.Int63n(200)) * time.Millisecond)
-			start = time.Now()
-			benchCounter.Add("c1", 1)
-			c <- time.Since(start)
-		}
-	})
-	b.StopTimer()
-
-	close(c)
-	<-done
-}
-
-func TestCountersFuncWithMultiLabels(t *testing.T) {
-	clear()
-	f := NewCountersFuncWithMultiLabels("TestCountersFuncWithMultiLabels", "help", []string{"label1"}, func() map[string]int64 {
-		return map[string]int64{
-			"c1": 1,
-			"c2": 2,
-		}
-	})
-
-	want1 := `{"c1": 1, "c2": 2}`
-	want2 := `{"c2": 2, "c1": 1}`
-	if s := f.String(); s != want1 && s != want2 {
-		t.Errorf("want %s or %s, got %s", want1, want2, s)
-	}
-}
-
-func TestCountersFuncWithMultiLabels_Hook(t *testing.T) {
-	var gotname string
-	var gotv *CountersFuncWithMultiLabels
-	clear()
-	Register(func(name string, v expvar.Var) {
-		gotname = name
-		gotv = v.(*CountersFuncWithMultiLabels)
-	})
-
-	v := NewCountersFuncWithMultiLabels("TestCountersFuncWithMultiLabels_Hook", "help", []string{"label1"}, func() map[string]int64 {
-		return map[string]int64{}
-	})
-	if gotname != "TestCountersFuncWithMultiLabels_Hook" {
-		t.Errorf("want TestCountersFuncWithMultiLabels_Hook, got %s", gotname)
-	}
-	if gotv != v {
-		t.Errorf("want %#v, got %#v", v, gotv)
-	}
-}
+//func TestCountersFuncWithMultiLabels(t *testing.T) {
+//	clear()
+//	f := NewCountersFuncWithMultiLabels("TestCountersFuncWithMultiLabels", "help", []string{"label1"}, func() map[string]int64 {
+//		return map[string]int64{
+//			"c1": 1,
+//			"c2": 2,
+//		}
+//	})
+//
+//	want1 := `{"c1": 1, "c2": 2}`
+//	want2 := `{"c2": 2, "c1": 1}`
+//	if s := f.String(); s != want1 && s != want2 {
+//		t.Errorf("want %s or %s, got %s", want1, want2, s)
+//	}
+//}
+//
+//func TestCountersFuncWithMultiLabels_Hook(t *testing.T) {
+//	var gotname string
+//	var gotv *CountersFuncWithMultiLabels
+//	clear()
+//	Register(func(name string, v expvar.Var) {
+//		gotname = name
+//		gotv = v.(*CountersFuncWithMultiLabels)
+//	})
+//
+//	v := NewCountersFuncWithMultiLabels("TestCountersFuncWithMultiLabels_Hook", "help", []string{"label1"}, func() map[string]int64 {
+//		return map[string]int64{}
+//	})
+//	if gotname != "TestCountersFuncWithMultiLabels_Hook" {
+//		t.Errorf("want TestCountersFuncWithMultiLabels_Hook, got %s", gotname)
+//	}
+//	if gotv != v {
+//		t.Errorf("want %#v, got %#v", v, gotv)
+//	}
+//}
